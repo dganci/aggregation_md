@@ -5,7 +5,7 @@ A C++ toolkit for protein aggregation molecular dynamics simulations, supporting
 Installation:
 ```bash
 git clone https://github.com/dganci/aggregation_md
-cd aggregation_md/cg_cvgen/build
+cd aggregation_md/cg_md/build
 cmake ..
 cmake --build . -j
 ```
