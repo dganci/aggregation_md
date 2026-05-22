@@ -1,0 +1,7 @@
+./build/cg_cvgen \
+  --input-colvar ../runs/10xdesmin_head_pS31/COLVAR \
+  --output-dir ../runs/10xdesmin_head_pS31/CVs \
+  --lags 5,7,10,12 \
+  --n-cvs 3 \
+  --equilibration-time-ps 50 \
+  --max-epochs 200
