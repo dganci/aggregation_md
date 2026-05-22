@@ -37,7 +37,7 @@ if [ -n "$CONDA_PREFIX" ]; then
  	export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 fi
 ```
-And activate: `source ~/.bashrc`
+Activate: `source ~/.bashrc`
 
 ```bash
 CPPFLAGS="-I$CONDA_PREFIX/include $CPPFLAGS"
@@ -58,7 +58,7 @@ export PLUMED_KERNEL=$HOME/plumed2/lib/libPlumedKernel.so
 export PATH=$HOME/plumed2/bin:$PATH
 export LD_LIBRARY_PATH=$HOME/plumed2/lib:$LD_LIBRARY_PATH
 ```
-And activate: `source ~/.bashrc`
+Activate: `source ~/.bashrc`
 
 ## GROMACS w/ PLUMED
 
@@ -78,7 +78,8 @@ make install
 Add to `~/.bashrc`:
 ```bash
 source $HOME/gromacs-plumed/bin/GMXRC
-And activate: `source ~/.bashrc`
+```
+Activate: `source ~/.bashrc`
 
 ## Verify
 
