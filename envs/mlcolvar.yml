@@ -5,4 +5,3 @@ channels:
 dependencies:
   - cg2at
   - notebook
-prefix: /home/danie/miniconda3/envs/mlcolvar
