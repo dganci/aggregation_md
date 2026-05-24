@@ -1,0 +1,9 @@
+;;; PHOSPHOSERINE
+[ moleculetype ]
+SEP 1
+[ atoms ]
+; id type resnr residue atom cgnr charge
+1 P2 1 SEP BB 1 0
+2 Q5n 1 SEP SC1 1 -1
+[ bonds ]
+BB SC1 1 0.33 5000

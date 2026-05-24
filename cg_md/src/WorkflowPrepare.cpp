@@ -38,9 +38,26 @@ void Workflow::coarse_grain() {
     std::vector<std::string> cmd = {
         cfg_.martinize, "-f", cfg_.pdbPath().string(), "-x", cfg_.cgPath().string(),
         "-o", cfg_.topologyPath().string(), "-name", cfg_.protomer_name,
-        "-ff", "martini3IDP", "-p", "backbone", "-cys", "auto"
+        "-ff", "martini3IDP"
     };
 
+    const auto ff_dir = cfg_.martinizeFfDirPath();
+    const auto map_dir = cfg_.martinizeMapDirPath();
+
+    if (std::filesystem::is_directory(ff_dir)) {
+        cmd.insert(cmd.end(), {"-ff-dir", ff_dir.string()});
+    } else if (cfg_.is_phospho) {
+        throw std::runtime_error("Missing Martinize2 extra force-field directory for phosphorylated input: " + ff_dir.string());
+    }
+
+    if (std::filesystem::is_directory(map_dir)) {
+        cmd.insert(cmd.end(), {"-map-dir", map_dir.string()});
+    } else if (cfg_.is_phospho) {
+        throw std::runtime_error("Missing Martinize2 extra mapping directory for phosphorylated input: " + map_dir.string());
+    }
+
+    cmd.insert(cmd.end(), {"-p", "backbone", "-cys", "auto"});
+    
     if (cfg_.use_elastic) {
         cmd.insert(cmd.end(), {"-elastic", "-ef", "700.0", "-el", "0", "-eu", "0.85", "-eunit", cfg_.elastic_units});
     }
@@ -222,8 +239,18 @@ void Workflow::patch_topology() {
         return;
     }
 
-    patch_martini_topology(cfg_.topologyPath(), cfg_.protomer_name, cfg_.n_prot,
-                           find_first_itp(cfg_.topologyPath().parent_path(), cfg_.protomer_name));
+    const auto itp_filename = find_first_itp(
+        cfg_.topologyPath().parent_path(),
+        cfg_.protomer_name
+    );
+
+    patch_martini_topology(
+        cfg_.topologyPath(),
+        cfg_.project_dir / "martini_v300",
+        cfg_.protomer_name,
+        cfg_.n_prot,
+        itp_filename
+    );
 }
 
 } // namespace cg

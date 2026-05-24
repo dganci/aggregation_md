@@ -97,6 +97,8 @@ std::unordered_map<std::string, Setter> option_setters() {
         {"--box-margin-nm", [](Config& c, const std::string& v) { c.box_margin_nm = std::stod(v); }},
         {"--solvate-radius-nm", [](Config& c, const std::string& v) { c.solvate_radius_nm = std::stod(v); }},
         {"--martini-water-gro", [](Config& c, const std::string& v) { c.martini_water_gro = v; }},
+        {"--martinize-ff-dir", [](Config& c, const std::string& v) { c.martinize_ff_dir = v; }},
+        {"--martinize-map-dir", [](Config& c, const std::string& v) { c.martinize_map_dir = v; }},
         {"--temperature-K", [](Config& c, const std::string& v) { c.temperature_K = std::stod(v); }},
         {"--salt-M", [](Config& c, const std::string& v) { c.salt_M = std::stod(v); }},
         {"--nvt-dt-ps", [](Config& c, const std::string& v) { c.nvt_dt_ps = std::stod(v); }},
@@ -147,6 +149,8 @@ std::filesystem::path Config::boxedPath() const { return project_dir / "system" 
 std::filesystem::path Config::solvatedPath() const { return project_dir / "system" / "beads" / (systemName() + "_solvated.gro"); }
 std::filesystem::path Config::ionsTprPath() const { return resultDir() / "ions.tpr"; }
 std::filesystem::path Config::martiniWaterPath() const { return martini_water_gro.is_absolute() ? martini_water_gro : project_dir / martini_water_gro; }
+std::filesystem::path Config::martinizeFfDirPath() const { return martinize_ff_dir.is_absolute() ? martinize_ff_dir : project_dir / martinize_ff_dir; }
+std::filesystem::path Config::martinizeMapDirPath() const { return martinize_map_dir.is_absolute() ? martinize_map_dir : project_dir / martinize_map_dir; }
 std::filesystem::path Config::beadsPath() const { return project_dir / "system" / "beads" / (systemName() + "_beads.gro"); }
 std::filesystem::path Config::systemDir() const { return project_dir / "system"; }
 std::filesystem::path Config::resultDir() const { return project_dir / "runs" / systemName(); }
@@ -238,6 +242,8 @@ void Config::print() const {
         << "  box_margin_nm     = " << box_margin_nm << '\n'
         << "  solvate_radius_nm = " << solvate_radius_nm << '\n'
         << "  martini_water_gro = " << martiniWaterPath() << '\n'
+        << "  martinize_ff_dir  = " << martinizeFfDirPath() << '\n'
+        << "  martinize_map_dir = " << martinizeMapDirPath() << '\n'
         << "  add_ions          = " << (add_ions ? "true" : "false") << '\n'
         << "  pdb_path          = " << pdbPath() << '\n'
         << "  topology_path     = " << topologyPath() << '\n'

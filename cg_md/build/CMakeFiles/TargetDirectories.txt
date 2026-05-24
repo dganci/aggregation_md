@@ -1,3 +1,0 @@
-/mnt/c/Users/danie/cg_md/build/CMakeFiles/cg_md.dir
-/mnt/c/Users/danie/cg_md/build/CMakeFiles/edit_cache.dir
-/mnt/c/Users/danie/cg_md/build/CMakeFiles/rebuild_cache.dir

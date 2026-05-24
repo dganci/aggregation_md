@@ -18,6 +18,9 @@ struct Config {
     std::string mpirun = "mpirun";
     std::string python = "python3";
 
+    std::filesystem::path martinize_ff_dir = "force_fields";
+    std::filesystem::path martinize_map_dir = "mappings";
+
     int n_prot = 10;
     std::string protomer_name = "desmin_head";
     int seq_length = 108;
@@ -107,6 +110,8 @@ struct Config {
     std::filesystem::path solvatedPath() const;
     std::filesystem::path ionsTprPath() const;
     std::filesystem::path martiniWaterPath() const;
+    std::filesystem::path martinizeFfDirPath() const;
+    std::filesystem::path martinizeMapDirPath() const;
     std::filesystem::path beadsPath() const;
     std::filesystem::path systemDir() const;
     std::filesystem::path resultDir() const;

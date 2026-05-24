@@ -1,0 +1,145 @@
+FROM almalinux:9
+
+SHELL ["/bin/bash", "-lc"]
+
+RUN dnf -y update && \
+    dnf -y install git wget bzip2 ca-certificates make which findutils \
+                   tar gzip patch perl diffutils file && \
+    dnf clean all
+
+ENV CONDA_DIR=/opt/conda
+ENV PATH=${CONDA_DIR}/bin:${PATH}
+
+RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O /tmp/miniforge.sh && \
+    bash /tmp/miniforge.sh -b -p ${CONDA_DIR} && \
+    rm /tmp/miniforge.sh && \
+    conda config --system --set channel_priority strict && \
+    conda config --system --add channels conda-forge
+
+RUN cat > /tmp/environment.yml <<'EOF'
+name: cg_md
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - cmake>=3.28
+  - ninja
+  - make
+  - git
+  - wget
+  - pkg-config
+  - setuptools<82
+  - gcc_linux-64=14.*
+  - gxx_linux-64=14.*
+  - gfortran_linux-64=14.*
+  - openmpi
+  - mpi4py
+  - fftw
+  - packmol
+  - dssp
+  - numpy
+  - scipy
+  - pandas
+  - pip
+  - pytorch
+  - libtorch
+  - libmetatomic-torch
+  - libmetatensor-torch
+  - pip:
+      - vermouth
+      - insane
+EOF
+
+RUN conda env create -f /tmp/environment.yml && conda clean -afy
+
+ENV LD_LIBRARY_PATH=""
+ENV LIBRARY_PATH=""
+ENV CPATH=""
+ENV CONDA_DEFAULT_ENV=cg_md
+ENV PATH=${CONDA_DIR}/envs/cg_md/bin:${CONDA_DIR}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CONDA_DIR}/envs/cg_md/lib:${LD_LIBRARY_PATH}
+ENV LIBRARY_PATH=${CONDA_DIR}/envs/cg_md/lib:${LIBRARY_PATH}
+ENV CPATH=${CONDA_DIR}/envs/cg_md/include:${CONDA_DIR}/envs/cg_md/include/torch/csrc/api/include:${CPATH}
+ENV CC=${CONDA_DIR}/envs/cg_md/bin/x86_64-conda-linux-gnu-gcc
+ENV CXX=${CONDA_DIR}/envs/cg_md/bin/x86_64-conda-linux-gnu-g++
+ENV FC=${CONDA_DIR}/envs/cg_md/bin/x86_64-conda-linux-gnu-gfortran
+ENV MPICC=${CONDA_DIR}/envs/cg_md/bin/mpicc
+ENV MPICXX=${CONDA_DIR}/envs/cg_md/bin/mpicxx
+
+WORKDIR /opt/src
+
+RUN git clone https://github.com/plumed/plumed2.git && \
+    cd plumed2 && \
+    ./configure \
+      CC=mpicc \
+      CXX=mpicxx \
+      CFLAGS="-O2 -fPIC" \
+      CXXFLAGS="-O2 -std=c++17 -fPIC -Wno-error -Wno-error=uninitialized -Wno-uninitialized -Wno-unknown-pragmas" \
+      MPICC=mpicc \
+      MPICXX=mpicxx \
+      --enable-mpi \
+      --enable-libtorch \
+      --enable-libmetatomic \
+      --enable-modules=+pytorch:+metatomic \
+      CPPFLAGS="-I${CONDA_DIR}/envs/cg_md/include -I${CONDA_DIR}/envs/cg_md/include/torch/csrc/api/include" \
+      LDFLAGS="-L${CONDA_DIR}/envs/cg_md/lib -Wl,-rpath,${CONDA_DIR}/envs/cg_md/lib" \
+      --prefix=/opt/plumed2 && \
+    make -j$(nproc) && \
+    make install
+
+RUN test -f /opt/plumed2/lib/libplumedKernel.so
+
+ENV PLUMED_KERNEL=/opt/plumed2/lib/libplumedKernel.so
+ENV PATH=/opt/plumed2/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/plumed2/lib:${LD_LIBRARY_PATH}
+
+ARG GMX_VERSION=2025.4
+
+RUN wget -q https://ftp.gromacs.org/gromacs/gromacs-${GMX_VERSION}.tar.gz && \
+    tar -xzf gromacs-${GMX_VERSION}.tar.gz && \
+    cd gromacs-${GMX_VERSION} && \
+    mkdir build && \
+    cd build && \
+    cmake .. \
+      -G Ninja \
+      -DCMAKE_INSTALL_PREFIX=/opt/gromacs-plumed \
+      -DGMX_MPI=ON \
+      -DGMX_OPENMP=ON \
+      -DGMX_GPU=OFF \
+      -DGMX_BUILD_OWN_FFTW=OFF \
+      -DGMX_FFT_LIBRARY=fftw3 \
+      -DGMX_DOUBLE=OFF \
+      -DGMX_SIMD=AUTO \
+      -DGMX_USE_PLUMED=ON \
+      -DGMX_NNPOT=OFF \
+      -DCMAKE_C_COMPILER=mpicc \
+      -DCMAKE_CXX_COMPILER=mpicxx \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_RPATH="${CONDA_DIR}/envs/cg_md/lib;/opt/plumed2/lib" && \
+    grep -n "GMX_USE_PLUMED" CMakeCache.txt && \
+    grep -E '^GMX_USE_PLUMED:.*=ON$' CMakeCache.txt && \
+    cmake --build . -j$(nproc) && \
+    cmake --install .
+
+ENV PATH=/opt/gromacs-plumed/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/gromacs-plumed/lib:${LD_LIBRARY_PATH}
+
+WORKDIR /workspace
+
+RUN git clone https://github.com/dganci/aggregation_md.git && \
+    cd aggregation_md/cg_md && \
+    rm -rf build && \
+    cmake -S . -B build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_C_COMPILER=${CC} \
+      -DCMAKE_CXX_COMPILER=${CXX} && \
+    cmake --build build -j$(nproc)
+
+WORKDIR /workspace/aggregation_md/cg_md/build
+
+RUN echo 'source /opt/gromacs-plumed/bin/GMXRC' >> /etc/bashrc && \
+    echo 'export PLUMED_KERNEL=/opt/plumed2/lib/libplumedKernel.so' >> /etc/bashrc && \
+    echo 'export PATH=/opt/plumed2/bin:/opt/gromacs-plumed/bin:$PATH' >> /etc/bashrc && \
+    echo 'export LD_LIBRARY_PATH=/opt/plumed2/lib:/opt/gromacs-plumed/lib:/opt/conda/envs/cg_md/lib:$LD_LIBRARY_PATH' >> /etc/bashrc
+
+CMD ["/bin/bash"]

@@ -10,14 +10,22 @@
 namespace cg {
 namespace {
 
-std::vector<std::string> martini_includes(const std::string& itp) {
+std::string include_line(const std::filesystem::path& path) {
+    return "#include \"" + path.lexically_normal().generic_string() + "\"";
+}
+
+std::vector<std::string> martini_includes(const std::filesystem::path& martini_dir,
+                                          const std::string& itp) {
+    const auto dir = std::filesystem::absolute(martini_dir).lexically_normal();
+
     return {
-        "#include \"../../martini_v300/martini_v300/martini_v3.0.0.itp\"",
-        "#include \"../../martini_v300/martini_v300/martini_v3.0.0_ions_v1.itp\"",
-        "#include \"../../martini_v300/martini_v300/martini_v3.0.0_solvents_v1.itp\"",
+        include_line(dir / "martini_v3.0.0.itp"),
+        include_line(dir / "martini_v3.0.0_ions_v1.itp"),
+        include_line(dir / "martini_v3.0.0_solvents_v1.itp"),
         "#include \"" + itp + "\""
     };
 }
+
 
 bool is_replaced_include(const std::string& line, const std::vector<std::string>& includes) {
     if (line == "#include \"martini.itp\"") return true;
@@ -42,23 +50,27 @@ std::string find_first_itp(const std::filesystem::path& topology_dir, const std:
 }
 
 void patch_martini_topology(const std::filesystem::path& topology_path,
+                            const std::filesystem::path& martini_dir,
                             const std::string& molecule_name,
                             int n_prot,
                             const std::string& itp_filename) {
-    const auto includes = martini_includes(itp_filename);
+    const auto includes = martini_includes(martini_dir, itp_filename);
     const auto lines = read_lines(topology_path);
     std::vector<std::string> out = includes;
 
     bool in_molecules = false;
     bool replaced = false;
+
     for (const auto& line : lines) {
         const auto t = trim(line);
+
         if (is_replaced_include(t, includes)) continue;
 
         if (starts_with(t, "[")) in_molecules = starts_with(t, "[ molecules ]");
         out.push_back(line);
 
         if (!in_molecules || replaced || t.empty() || starts_with(t, ";") || starts_with(t, "[")) continue;
+
         out.back() = molecule_line(molecule_name, itp_filename, n_prot);
         replaced = true;
     }
