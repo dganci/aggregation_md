@@ -309,13 +309,35 @@ ENV CG_CVGEN_MLCOLVAR_PATH=/workspace/aggregation_md/cg_md/lib/mlcolvar
 #     di appendersi.
 RUN set -e; \
     echo "=== GROMACS ==="; \
-    gmx_version="$(gmx_mpi mdrun -version 2>&1)"; \
-    printf '%s\n' "$gmx_version" | grep -iE 'GROMACS version|GPU support|SIMD instructions|MPI library'; \
-    printf '%s\n' "$gmx_version" | grep -q 'GPU support: *CUDA' \
-      || { echo "FATALE: GROMACS compilato senza CUDA"; exit 1; }; \
-    gmx_mpi mdrun -h 2>&1 | grep -q -- '-plumed' \
-      || { echo "FATALE: mdrun senza opzione -plumed: la patch non e' stata applicata"; exit 1; }; \
-    echo "  opzione mdrun -plumed: presente"; \
+    # Un binario compilato per un SIMD che l'HOST DI BUILD non possiede muore di
+    # SIGILL (uscita 132) gia' su `-version`. Succede sistematicamente costruendo
+    # AVX_512 su Apple Silicon, ed e' una proprieta' della macchina che compila,
+    # non dell'immagine: lo stesso binario su Leonardo gira. Va pero' distinto da
+    # un guasto vero, quindi si guarda il codice di uscita e si salta SOLO il 132.
+    # Cio' che AVX_512 garantisce davvero e' gia' stato provato staticamente al
+    # layer GROMACS, dove CMakeCache.txt viene interrogata per GMX_GPU=CUDA,
+    # GMX_USE_PLUMED e GMX_SIMD: quelle prove non richiedono di eseguire nulla.
+    set +e; gmx_version="$(gmx_mpi mdrun -version 2>&1)"; gmx_rc=$?; set -e; \
+    if [ "$gmx_rc" -eq 132 ]; then \
+      echo "  ATTENZIONE: gmx_mpi non e' eseguibile su questo host (SIGILL)."; \
+      echo "  Compilato per ${GMX_SIMD}, che questa CPU non ha. Non e' un difetto"; \
+      echo "  dell'immagine: gli smoke test di GROMACS sono RIMANDATI al sistema"; \
+      echo "  di destinazione. Eseguili la' come PRIMA cosa, con:"; \
+      echo "    singularity exec <img>.sif gmx_mpi mdrun -version"; \
+      echo "    singularity exec <img>.sif gmx_mpi mdrun -h | grep -- -plumed"; \
+      printf '%s\n' "${GMX_SIMD}" > /opt/SIMD_NON_VERIFICATO; \
+    elif [ "$gmx_rc" -ne 0 ]; then \
+      echo "FATALE: gmx_mpi mdrun -version e' uscito con $gmx_rc (non 132, quindi"; \
+      echo "        non e' il SIMD): questo e' un guasto vero."; \
+      printf '%s\n' "$gmx_version"; exit 1; \
+    else \
+      printf '%s\n' "$gmx_version" | grep -iE 'GROMACS version|GPU support|SIMD instructions|MPI library'; \
+      printf '%s\n' "$gmx_version" | grep -q 'GPU support: *CUDA' \
+        || { echo "FATALE: GROMACS compilato senza CUDA"; exit 1; }; \
+      gmx_mpi mdrun -h 2>&1 | grep -q -- '-plumed' \
+        || { echo "FATALE: mdrun senza opzione -plumed: la patch non e' stata applicata"; exit 1; }; \
+      echo "  opzione mdrun -plumed: presente"; \
+    fi; \
     echo "=== Python ==="; \
     python3 -c "import torch, numpy, pandas, mlcolvar, lightning, mdtraj; print('  torch', torch.__version__)"; \
     for t in martinize2 insane packmol mkdssp cg_md cg_cvgen; do \

@@ -43,9 +43,18 @@ run_entry() {
     say "$progress $name  attempt $attempt  -> $log"
     local flags
     read -r -a flags <<< "${flagsets[$i]}"
-    timeout --signal=TERM --kill-after=5m "$PER_SIM_TIMEOUT" \
-        "$CG_MD" --project-dir "$PROJECT_DIR" --ntomp "$NTOMP" "${flags[@]}" \
-        >&7 2>&7
+    # One GPU per entry, held for as long as the entry runs. The subshell owns
+    # the lock file descriptor, so the device is released when the entry ends -
+    # including when it is killed - without any cleanup path to forget.
+    if [[ -n "${GPUS:-}" ]]; then
+      gpu_run 7 "$name" \
+        timeout --signal=TERM --kill-after=5m "$PER_SIM_TIMEOUT" \
+          "$CG_MD" --project-dir "$PROJECT_DIR" --ntomp "$NTOMP" "${flags[@]}"
+    else
+      timeout --signal=TERM --kill-after=5m "$PER_SIM_TIMEOUT" \
+          "$CG_MD" --project-dir "$PROJECT_DIR" --ntomp "$NTOMP" "${flags[@]}" \
+          >&7 2>&7
+    fi
     code=$?
     logdir_close 7
 

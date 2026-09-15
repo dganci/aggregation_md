@@ -15,12 +15,28 @@ source "$HERE/lib/logdir.sh"
 # shellcheck source=lib/resources.sh
 source "$HERE/lib/resources.sh"
 # shellcheck source=lib/entry.sh
+source "$HERE/lib/gpu.sh"
 source "$HERE/lib/entry.sh"
 
 CG_MD="${CG_MD:-/data/build/cg_md}"
 PROJECT_DIR="${PROJECT_DIR:-/data}"
 LOG_ROOT="${LOG_ROOT:-/data/runs/_batch}"
 PER_SIM_TIMEOUT="${PER_SIM_TIMEOUT:-0}"
+# GPUs to spread the concurrent entries over. Empty (the default) means no
+# pinning at all, which is right on a CPU-only machine.
+#
+# It matters because GROMACS, left alone, has every mdrun pick the first device
+# it can see: four concurrent entries on a four-GPU node would all land on GPU 0
+# and leave three idle while the accounting bills the whole node either way
+# (B_H = T x N x R x C, R = 1.0, C = 32 - you pay for the node, not for the GPUs
+# you used). Pinning one GPU per entry is the difference between 1/4 and 4/4 of
+# what the allocation is charged for.
+#
+# Give a count ("4") or an explicit list ("0,1,2,3"). Entries take a free device
+# under flock rather than by index: the pool starts a new entry whenever ANY slot
+# frees, so an index-based assignment collides as soon as entries finish out of
+# order - which they do, since they have different sizes and stop conditions.
+GPUS="${GPUS:-}"
 MIN_FREE_GB="${MIN_FREE_GB:-40}"
 NTOMP="${NTOMP:-0}"
 JOBS="${JOBS:-2}"
