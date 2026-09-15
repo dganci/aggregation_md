@@ -1,0 +1,340 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+#  aggr_Dockerfile.leonardo - prova generale della build per Leonardo Booster
+#
+#  NON e' l'immagine che girera' su Leonardo: la' si compila nativo con
+#  build_leonardo.sh. Questo Dockerfile serve a validare *la ricetta* sul Mac,
+#  prima che il progetto apra, dove sbagliare non costa budget.
+#
+#  Rispetto ad aggr_Dockerfile.alma9 cambia:
+#    - base nvidia/cuda:12.2.2-devel-rockylinux9 (stessa famiglia RHEL 9 di
+#      Alma 9, ma con nvcc: GROMACS si compila con CUDA anche senza GPU)
+#    - gcc-toolset-12 al posto del gcc 14 di conda (nvcc 12.2 rifiuta > 12.x)
+#    - OpenMPI 4.1 di sistema; l'environment conda NON ha piu' openmpi/mpi4py
+#    - GMX_GPU=CUDA, GMX_CUDA_TARGET_SM=80 (A100)
+#    - GROMACS PATCHATO con `plumed patch` invece della sola interfaccia nativa
+#
+#  DUE COSE DA SAPERE PRIMA DI TOCCARE QUESTO FILE - le stesse di
+#  build_leonardo.sh, e sono qui perche' e' qui che si verificano:
+#
+#  1) La patch di PLUMED non e' opzionale se servono i multiple walker, e va
+#     usata INSIEME a GMX_USE_PLUMED=ON, non al suo posto. La patch non
+#     sostituisce il modulo nativo: lo estende. Patcha cmake/gmxManagePlumed.cmake
+#     e i sorgenti di src/gromacs/applied_forces/plumed/, e li' aggiunge le cmd()
+#     che mancavano - "GREX setMPIIntercomm", "GREX setMPIIntracomm", "GREX init"
+#     (cioe' il comunicatore multi-simulazione, cioe' i walker) e
+#     "setNumOMPthreads". Con GMX_USE_PLUMED=OFF quel modulo non viene compilato
+#     affatto e la patch resta lettera morta: mdrun non avrebbe nemmeno -plumed.
+#     Senza patch, cg_md scrive WALKERS_MPI (--metad-walkers > 1), ogni walker
+#     vede mpi_nw = 1 e i quattro non si scambiano gli hills: nessun errore,
+#     quattro metadinamiche indipendenti, una FES sbagliata. La patch piu'
+#     recente e' gromacs-2025.0, da cui la versione qui sotto.
+#
+#  2) La libstdc++ di conda deve stare sulla RIGA DI COMANDO di ogni link di
+#     PLUMED, dentro CXXFLAGS. PLUMED linka tre binari, in tre modi diversi:
+#       plumed-static : <CXXFLAGS> ...  -lstdc++ ... -L$CONDA/lib -Wl,-rpath,...
+#       plumed-runtime: <CXXFLAGS> main.o Plumed.o       -o plumed-runtime -ldl
+#       plumed        : <CXXFLAGS> main.o PlumedStatic.o libplumedKernel.so -ldl
+#     Solo il primo riceve LDFLAGS. Sugli altri due l'unica libstdc++ in gioco e'
+#     quella implicita del driver g++, e senza un -L esplicito e' la libstdc++ di
+#     SISTEMA (RHEL 9 = gcc 11: GLIBCXX fino a 3.4.29, CXXABI fino a 1.3.13),
+#     mentre libplumedKernel.so ha l'rpath su conda e si trascina dietro
+#     libmetatomic_torch e libtorch, che vogliono GLIBCXX_3.4.30 e CXXABI_1.3.15.
+#     LIBRARY_PATH NON risolve: gcc lo passa a ld dopo i propri percorsi interni,
+#     quindi la libstdc++ di sistema vince lo stesso (ed e' il motivo per cui
+#     toglierlo, al primo tentativo, non cambio' niente). Serve un -L vero, e
+#     l'unico posto che finisce su tutte e tre le righe di link e' CXXFLAGS.
+#     LD_LIBRARY_PATH e' un'altra cosa ancora: ld la usa per le DT_NEEDED delle
+#     librerie condivise, e tenendo conda fuori fino a dopo il layer di PLUMED,
+#     mpicxx -> libmpi -> hwloc -> libxml2 resta sulle librerie di sistema e
+#     libicuuc non entra mai in gioco (era l'errore su plumed-runtime).
+#
+#  Build:
+#    docker buildx build --platform linux/amd64 \
+#      -f aggr_Dockerfile.leonardo -t aggregation-md:leonardo-rehearsal .
+#
+#  Sotto emulazione su Apple Silicon sono diverse ore: lancialo e vai a dormire.
+#
+#  ATTENZIONE al SIMD: di default resta AVX2_256, perche' QEMU non emula
+#  AVX-512 e un binario AVX_512 morirebbe di SIGILL gia' su `gmx_mpi -version`,
+#  facendo fallire gli smoke test per un motivo che su Leonardo non esiste.
+#  Se anche AVX2_256 muore con "Illegal instruction" allo smoke test, l'emulatore
+#  che hai (Rosetta o QEMU, a seconda della versione di Docker Desktop) non copre
+#  neanche AVX2: rilancia con --build-arg GMX_SIMD=SSE2. Non cambia nulla di cio'
+#  che stai validando - il set di SIMD non tocca ne' PLUMED ne' nvcc ne' cg_md.
+#  Per verificare che anche AVX_512 sia accettato, rilancia la build con
+#    --build-arg GMX_SIMD=AVX_512
+#  e fermati quando il layer GROMACS ha superato il `cmake` di configurazione.
+# =============================================================================
+FROM nvidia/cuda:12.2.2-devel-rockylinux9
+
+SHELL ["/bin/bash", "-lc"]
+
+ARG GMX_VERSION=2025.0
+ARG GMX_PLUMED_PATCH=gromacs-2025.0
+ARG GMX_USE_PLUMED=ON
+ARG GMX_SIMD=AVX2_256
+ARG GMX_CUDA_TARGET_SM=80
+
+RUN dnf -y update && \
+    dnf -y install git wget bzip2 ca-certificates make which findutils \
+                   tar gzip patch perl diffutils file \
+                   gcc-toolset-12 gcc-toolset-12-gcc-gfortran \
+                   openmpi openmpi-devel && \
+    dnf clean all
+
+# gcc-toolset-12 e openmpi non sono sul PATH di default su RHEL 9.
+ENV PATH=/opt/rh/gcc-toolset-12/root/usr/bin:/usr/lib64/openmpi/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/rh/gcc-toolset-12/root/usr/lib64:/usr/lib64/openmpi/lib:${LD_LIBRARY_PATH}
+ENV MANPATH=/opt/rh/gcc-toolset-12/root/usr/share/man
+
+RUN gcc --version | head -1 && mpicc --version | head -1 && \
+    mpirun --version | head -1 && nvcc --version | tail -2
+
+ENV CONDA_DIR=/opt/conda
+
+RUN wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh -O /tmp/miniforge.sh && \
+    bash /tmp/miniforge.sh -b -u -p ${CONDA_DIR} && \
+    rm /tmp/miniforge.sh && \
+    ${CONDA_DIR}/bin/conda config --system --set channel_priority strict && \
+    ${CONDA_DIR}/bin/conda config --system --add channels conda-forge
+
+# Differenza chiave rispetto all'immagine alma9: niente openmpi, niente mpi4py,
+# niente compilatori conda. L'MPI e' quella di sistema (4.1.x, stessa serie di
+# Leonardo) e il compilatore e' gcc-toolset-12. Conda resta solo per Python,
+# LibTorch e metatomic.
+RUN cat > /tmp/environment.yml <<'YAML'
+name: cg_md
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - cmake>=3.28
+  - ninja
+  - make
+  - git
+  - wget
+  - pkg-config
+  - setuptools<82
+  - fftw          # libfftw3f: evita -DGMX_BUILD_OWN_FFTW=ON, che scaricherebbe
+                  # fftw durante la build (i nodi di calcolo non hanno rete)
+  - packmol
+  - dssp          # mkdssp; nell'immagine alma9 arrivava dall'rpm EPEL
+  - numpy
+  - scipy
+  - pandas
+  - matplotlib-base
+  - pip
+  - pytorch
+  - libtorch
+  - libmetatomic-torch
+  - libmetatensor-torch
+  - pip:
+      - vermouth
+      - insane
+      - gemmi==0.7.5   # tools/dssp.py: PDB -> mmCIF prima di mkdssp
+YAML
+
+RUN ${CONDA_DIR}/bin/conda env create -f /tmp/environment.yml && \
+    ${CONDA_DIR}/bin/conda clean -afy && \
+    rm -rf /root/.cache /tmp/* ${CONDA_DIR}/pkgs/*
+
+# L'environment cg_md PRIMA di ${CONDA_DIR}/bin: entrambi hanno un python3, e
+# quello base non ha torch/mlcolvar/lightning. Stessa trappola documentata
+# nell'immagine alma9. PATH non influenza il linker, quindi qui e' innocuo;
+# LD_LIBRARY_PATH invece no, e infatti conda ci entra solo dopo PLUMED.
+ENV PATH=${CONDA_DIR}/envs/cg_md/bin:${CONDA_DIR}/bin:${PATH}
+# CPATH NON viene impostato globalmente: lo riceve solo il configure di PLUMED.
+# Esportarlo per tutta l'immagine metterebbe gli header di conda davanti a
+# quelli di sistema anche per GROMACS, mentre le librerie restano di sistema.
+# LIBRARY_PATH non viene mai impostato: gcc lo passa a ld dopo i propri percorsi
+# interni, quindi non sposterebbe niente (vedi il punto 2). Il -L su conda ce
+# l'ha solo PLUMED, dentro i suoi CXXFLAGS.
+ENV CC=gcc
+ENV CXX=g++
+ENV MPICC=mpicc
+ENV MPICXX=mpicxx
+
+# --- libstdc++: serve al link di plumed-static, che ha -lstdc++ sulla riga ----
+# conda-forge spedisce libstdcxx 16.x, i cui simboli GLIBCXX sono piu' recenti
+# di quelli della libstdc++ di sistema di RHEL 9 (gcc 11, max GLIBCXX_3.4.29).
+# Il pacchetto conda porta pero' solo libstdc++.so.6, non il symlink di sviluppo
+# libstdc++.so che il linker cerca.
+RUN cd ${CONDA_DIR}/envs/cg_md/lib && \
+    ln -sf $(ls libstdc++.so.6.* | sort -V | tail -1) libstdc++.so && \
+    ls -l libstdc++.so* && \
+    strings libstdc++.so.6 | grep -o 'GLIBCXX_3\.4\.[0-9]*' | sort -uV | tail -3
+
+WORKDIR /opt/src
+
+# dssp arriva da conda (vedi environment.yml); il pacchetto a volte installa il
+# solo binario `dssp`, mentre cg_md invoca `mkdssp`.
+RUN if [ ! -x ${CONDA_DIR}/envs/cg_md/bin/mkdssp ] && [ -x ${CONDA_DIR}/envs/cg_md/bin/dssp ]; then \
+      ln -sf ${CONDA_DIR}/envs/cg_md/bin/dssp ${CONDA_DIR}/envs/cg_md/bin/mkdssp ; \
+    fi && \
+    ${CONDA_DIR}/envs/cg_md/bin/mkdssp --version 2>&1 | head -1 || true
+
+# --- PLUMED. LD_LIBRARY_PATH qui NON contiene conda (vedi il punto 2 in testa
+#     al file); CPATH e' inline, solo per questo comando.
+#     La verifica dopo configure legge Makefile.conf e NON src/config/config.txt:
+#     quest'ultimo e' un target di make e subito dopo configure non esiste, il
+#     grep falliva sempre e il "|| true" se lo mangiava.
+RUN export CPATH=${CONDA_DIR}/envs/cg_md/include:${CONDA_DIR}/envs/cg_md/include/torch/csrc/api/include && \
+    git clone --depth 1 https://github.com/plumed/plumed2.git && \
+    cd plumed2 && \
+    ./configure \
+      CC=${MPICC} CXX=${MPICXX} \
+      CFLAGS="-O2 -fPIC" \
+      CXXFLAGS="-O2 -std=c++17 -fPIC -Wno-error -Wno-error=uninitialized -Wno-uninitialized -Wno-unknown-pragmas -L${CONDA_DIR}/envs/cg_md/lib -Wl,-rpath,${CONDA_DIR}/envs/cg_md/lib" \
+      MPICC=${MPICC} MPICXX=${MPICXX} \
+      --enable-mpi \
+      --enable-libtorch \
+      --enable-libmetatomic \
+      --enable-modules=+pytorch:+metatomic \
+      CPPFLAGS="-I${CONDA_DIR}/envs/cg_md/include -I${CONDA_DIR}/envs/cg_md/include/torch/csrc/api/include" \
+      LDFLAGS="-L${CONDA_DIR}/envs/cg_md/lib -Wl,-rpath,${CONDA_DIR}/envs/cg_md/lib -ltorch -lc10" \
+      --prefix=/opt/plumed2 && \
+    grep -E '__PLUMED_HAS_LIBTORCH' Makefile.conf > /dev/null && \
+    make -j$(nproc) && make install && \
+    cd / && rm -rf /opt/src/plumed2
+
+RUN test -f /opt/plumed2/lib/libplumedKernel.so
+
+ENV PLUMED_KERNEL=/opt/plumed2/lib/libplumedKernel.so
+ENV PATH=/opt/plumed2/bin:${PATH}
+# Solo ADESSO conda entra in LD_LIBRARY_PATH: serve a runtime a LibTorch e ai
+# pacchetti conda, e da qui in poi non c'e' piu' nessun link che possa pescarne
+# la libxml2 al posto di quella di sistema.
+ENV LD_LIBRARY_PATH=/opt/plumed2/lib:${CONDA_DIR}/envs/cg_md/lib:${LD_LIBRARY_PATH}
+
+# Verifica di PLUMED subito: se manca un modulo, saperlo adesso risparmia le ore
+# di GROMACS. `config has X` interroga le FEATURE, `config module X` i MODULI:
+# pytorch e' un modulo, quindi `config has pytorch` dice sempre "not found".
+RUN set -e; \
+    plumed --no-mpi info --version; \
+    plumed --no-mpi config has libtorch     || { echo "FATALE: PLUMED senza libtorch";  exit 1; }; \
+    plumed --no-mpi config module pytorch   || { echo "FATALE: modulo pytorch assente";   exit 1; }; \
+    plumed --no-mpi config module metatomic || { echo "FATALE: modulo metatomic assente"; exit 1; }; \
+    plumed --no-mpi manual --action PYTORCH_MODEL > /dev/null 2>&1 \
+      || { echo "FATALE: niente azione PYTORCH_MODEL"; exit 1; }; \
+    echo "PLUMED: libtorch, pytorch, metatomic, PYTORCH_MODEL: ok"
+
+# --- GROMACS con CUDA, patchato con PLUMED. nvcc compila senza bisogno di una
+#     GPU presente: e' esattamente questo che rende utile la prova in locale.
+#     La patch va applicata nella root dei sorgenti PRIMA di cmake (lo dice la
+#     patch stessa), in modalita' runtime: GROMACS linka il wrapper e carica
+#     libplumedKernel.so da PLUMED_KERNEL all'avvio.
+#
+#     Anche qui conda esce da LD_LIBRARY_PATH, per lo stesso motivo del punto 2
+#     in testa al file, e qui non e' un dettaglio: il "check for working CXX
+#     compiler" di cmake linka un programmino con mpicxx, e con conda in testa
+#     ld prende la sua libxml2 -> libicuuc -> GLIBCXX_3.4.30 e dichiara
+#     "compiler broken". E' anche cio' che faceva fallire FindMPI
+#     (MPI_CXX_WORKS) nel tentativo con gcc/g++. GROMACS da conda vuole solo
+#     libfftw3f, che riceve per percorso assoluto, quindi non ci perde nulla;
+#     a runtime ritrova conda dall'rpath (CMAKE_INSTALL_RPATH) e da sourceme.sh.
+RUN set -e; \
+    export LD_LIBRARY_PATH="$(printf '%s' "$LD_LIBRARY_PATH" | tr ':' '\n' | grep -v "^${CONDA_DIR}/envs/cg_md/lib$" | paste -sd:)"; \
+    echo "LD_LIBRARY_PATH per la build di GROMACS: $LD_LIBRARY_PATH"; \
+    wget -q https://ftp.gromacs.org/gromacs/gromacs-${GMX_VERSION}.tar.gz; \
+    tar -xzf gromacs-${GMX_VERSION}.tar.gz; \
+    plumed --no-mpi patch -l 2>&1 | grep -q -- "${GMX_PLUMED_PATCH}"; \
+    ( cd gromacs-${GMX_VERSION} && plumed --no-mpi patch -p --runtime -e ${GMX_PLUMED_PATCH} ); \
+    GMX_COMMON="-DCMAKE_INSTALL_PREFIX=/opt/gromacs-plumed \
+      -DGMX_MPI=ON -DGMX_THREAD_MPI=OFF -DGMX_OPENMP=ON \
+      -DGMX_GPU=CUDA -DGMX_CUDA_TARGET_SM=${GMX_CUDA_TARGET_SM} \
+      -DCMAKE_CUDA_HOST_COMPILER=$(which g++) \
+      -DGMX_SIMD=${GMX_SIMD} \
+      -DGMX_BUILD_OWN_FFTW=OFF -DGMX_FFT_LIBRARY=fftw3 \
+      -DFFTWF_LIBRARY=${CONDA_DIR}/envs/cg_md/lib/libfftw3f.so \
+      -DFFTWF_INCLUDE_DIR=${CONDA_DIR}/envs/cg_md/include \
+      -DGMX_DOUBLE=OFF -DGMX_USE_PLUMED=${GMX_USE_PLUMED} -DGMX_NNPOT=OFF \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_RPATH=${CONDA_DIR}/envs/cg_md/lib;/opt/plumed2/lib"; \
+    if ! cmake -S gromacs-${GMX_VERSION} -B gromacs-${GMX_VERSION}/build -G Ninja $GMX_COMMON \
+         -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+         -DMPI_C_COMPILER=$(which mpicc) -DMPI_CXX_COMPILER=$(which mpicxx); then \
+      echo "== FindMPI non se l'e' cavata con gcc/g++: riprovo con i wrapper MPI come compilatori =="; \
+      rm -rf gromacs-${GMX_VERSION}/build; \
+      cmake -S gromacs-${GMX_VERSION} -B gromacs-${GMX_VERSION}/build -G Ninja $GMX_COMMON \
+        -DCMAKE_C_COMPILER=mpicc -DCMAKE_CXX_COMPILER=mpicxx; \
+    fi; \
+    # GMX_SIMD e' una RICHIESTA, non una garanzia: GROMACS puo' declassarla da
+    # solo se il compilatore non la regge, e senza questo controllo la scoperta
+    # arriverebbe su Leonardo dopo ore di build e un push. Nota che compilare
+    # AVX_512 su un Mac M1 FUNZIONA (il gcc x86-64 sotto Rosetta emette quelle
+    # istruzioni) ma il binario NON e' eseguibile sull'host: si testa in loco.
+    grep -E "^GMX_SIMD:.*=${GMX_SIMD}\$" gromacs-${GMX_VERSION}/build/CMakeCache.txt \
+      || { echo "FATALE: GMX_SIMD richiesto ${GMX_SIMD}, ottenuto $(grep '^GMX_SIMD:' gromacs-${GMX_VERSION}/build/CMakeCache.txt)"; exit 1; }; \
+    grep -E '^GMX_GPU:.*=CUDA$' gromacs-${GMX_VERSION}/build/CMakeCache.txt; \
+    grep -E "^GMX_USE_PLUMED:.*=${GMX_USE_PLUMED}\$" gromacs-${GMX_VERSION}/build/CMakeCache.txt; \
+    cmake --build gromacs-${GMX_VERSION}/build -j$(nproc); \
+    cmake --install gromacs-${GMX_VERSION}/build; \
+    cd /; rm -rf /opt/src/gromacs-${GMX_VERSION}*
+
+ENV PATH=/opt/gromacs-plumed/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/gromacs-plumed/lib:${LD_LIBRARY_PATH}
+
+RUN pip install --no-cache-dir mlcolvar lightning mdtraj && \
+    python3 -c "import mlcolvar, lightning, mdtraj; print('analysis deps ok')"
+
+WORKDIR /workspace
+
+ARG AGGR_REPO=https://github.com/dganci/aggregation_md.git
+ARG AGGR_REF=main
+ARG AGGR_CACHE_BUST=0
+
+RUN echo "cache-bust=${AGGR_CACHE_BUST}" && \
+    git clone --depth 1 --branch ${AGGR_REF} ${AGGR_REPO} aggregation_md && \
+    cd aggregation_md && \
+    for proj in cg_md cg_cvgen; do \
+      rm -rf $proj/build && \
+      cmake -S $proj -B $proj/build -G Ninja -DCMAKE_BUILD_TYPE=Release && \
+      cmake --build $proj/build -j$(nproc); \
+    done && \
+    { ctest --test-dir cg_md/build --output-on-failure --no-tests=error \
+      || echo "ATTENZIONE: test di cg_md falliti, o nessun test trovato (il repo non contiene cg_md/tests?)"; } && \
+    rm -rf /workspace/aggregation_md/.git
+
+RUN ln -sf /workspace/aggregation_md/cg_md/build/cg_md /usr/local/bin/cg_md && \
+    ln -sf /workspace/aggregation_md/cg_cvgen/build/cg_cvgen /usr/local/bin/cg_cvgen
+
+# Il pair builder consapevole dei walker sta nella copia patchata dentro il repo:
+# senza questa variabile cvgen_backend.py usa mlcolvar di PyPI, il cui
+# create_timelagged_dataset non ha l'argomento "walker".
+ENV CG_CVGEN_MLCOLVAR_PATH=/workspace/aggregation_md/cg_md/lib/mlcolvar
+
+# --- Verifica finale. Un solo `gmx_mpi -version`, non tre: e' un binario MPI
+#     lanciato senza launcher, e ogni chiamata in piu' e' un'occasione in piu'
+#     di appendersi.
+RUN set -e; \
+    echo "=== GROMACS ==="; \
+    gmx_version="$(gmx_mpi mdrun -version 2>&1)"; \
+    printf '%s\n' "$gmx_version" | grep -iE 'GROMACS version|GPU support|SIMD instructions|MPI library'; \
+    printf '%s\n' "$gmx_version" | grep -q 'GPU support: *CUDA' \
+      || { echo "FATALE: GROMACS compilato senza CUDA"; exit 1; }; \
+    gmx_mpi mdrun -h 2>&1 | grep -q -- '-plumed' \
+      || { echo "FATALE: mdrun senza opzione -plumed: la patch non e' stata applicata"; exit 1; }; \
+    echo "  opzione mdrun -plumed: presente"; \
+    echo "=== Python ==="; \
+    python3 -c "import torch, numpy, pandas, mlcolvar, lightning, mdtraj; print('  torch', torch.__version__)"; \
+    for t in martinize2 insane packmol mkdssp cg_md cg_cvgen; do \
+      command -v $t > /dev/null && echo "  $t ok" || { echo "  $t MISSING"; exit 1; }; \
+    done; \
+    python3 -c "import gemmi; print('  gemmi', gemmi.__version__)"; \
+    echo "=== dati letti a runtime da cg_md (dal clone GitHub) ==="; \
+    missing=""; \
+    for d in force_fields mappings martini_v300 tools scripts lib/mlcolvar/mlcolvar_copy; do \
+      if [ -e /workspace/aggregation_md/cg_md/$d ]; then echo "  $d ok"; \
+      else echo "  $d MANCANTE nel repo"; missing="$missing $d"; fi; \
+    done; \
+    if [ -n "$missing" ]; then \
+      echo; \
+      echo "ATTENZIONE: il repo GitHub non contiene:$missing"; \
+      echo "  Non e' un difetto della ricetta - questa immagine resta valida - ma sono"; \
+      echo "  file che cg_md cerca a runtime. Su Leonardo build_leonardo.sh si FERMA se"; \
+      echo "  mancano. Committali, o copiali sul clone come al passo 10b della guida."; \
+    fi
+
+WORKDIR /workspace/aggregation_md/cg_md
+CMD ["/bin/bash"]
