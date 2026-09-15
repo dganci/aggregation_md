@@ -1,92 +1,33 @@
 #include "MdpWriter.hpp"
 #include "Config.hpp"
 #include "FileUtils.hpp"
+#include "MdpSpec.hpp"
+#include "StringUtils.hpp"
 
+#include <cstdint>
 #include <sstream>
-#include <utility>
-#include <vector>
+#include <string>
 
 namespace cg {
-namespace {
 
-using Lines = std::vector<std::pair<std::string, std::string>>;
-
-void emit(std::ostringstream& out, const Lines& lines) {
-    for (const auto& [key, value] : lines) out << key << " = " << value << '\n';
-}
-
-void blank(std::ostringstream& out) { out << '\n'; }
-
-std::string fp(double x) { return std::to_string(x); }
-
-struct MdSpec {
-    std::string title;
-    std::filesystem::path filename;
-    double dt_ps = 0.0;
-    std::int64_t nsteps = 0;
-    bool continuation = true;
-    bool pressure = true;
-    bool gen_vel = false;
-    double tau_p = 12.0;
-    std::string coulomb_modifier = "Potential-shift-verlet";
-};
-
-std::string production_mdp(const Config& cfg, const MdSpec& spec) {
+std::string nonbonded_block(const Config& cfg) {
     std::ostringstream out;
-    out << "; " << spec.title << '\n';
-    emit(out, {
-        {"integrator", "md"},
-        {"dt", fp(spec.dt_ps)},
-        {"nsteps", std::to_string(spec.nsteps)},
-        {"continuation", spec.continuation ? "yes" : "no"},
-        {"comm-mode", "Linear"}
-    });
-    blank(out);
-    emit(out, {
-        {"nstxout", "0"},
-        {"nstvout", "0"},
-        {"nstenergy", "1000"},
-        {"nstlog", "1000"},
-        {"nstxout-compressed", "1000"}
-    });
-    blank(out);
-    out << thermostat_block(cfg);
-    blank(out);
-
-    if (spec.pressure) {
-        emit(out, {
-            {"pcoupl", "C-rescale"},
-            {"pcoupltype", "isotropic"},
-            {"tau-p", fp(spec.tau_p)},
-            {"ref-p", "1.0"},
-            {"compressibility", "3e-4"}
-        });
-    } else {
-        emit(out, {{"pcoupl", "no"}});
-    }
-
-    blank(out);
-    emit(out, {
-        {"constraints", "none"},
-        {"gen_vel", spec.gen_vel ? "yes" : "no"}
-    });
-    if (spec.gen_vel) emit(out, {{"gen_temp", fp(cfg.temperature_K)}, {"gen_seed", "-1"}});
-    blank(out);
     emit(out, {
         {"cutoff-scheme", "Verlet"},
+        {"nstlist", std::to_string(cfg.nstlist)},
+        {"verlet-buffer-tolerance", to_string_fixed(cfg.verlet_buffer_tolerance, 4)},
+        {"rlist", to_string_fixed(cfg.rlist_nm, 2)},
         {"coulombtype", "Reaction-Field"},
-        {"rvdw", "1.1"},
-        {"rcoulomb", "1.1"},
-        {"coulomb-modifier", spec.coulomb_modifier}
+        {"rcoulomb", to_string_fixed(cfg.rcoulomb_nm, 2)},
+        {"epsilon_r", to_string_fixed(cfg.epsilon_r, 1)},
+        {"epsilon_rf", "0"},
+        {"coulomb-modifier", "Potential-shift"},
+        {"vdwtype", "Cut-off"},
+        {"vdw-modifier", "Potential-shift"},
+        {"rvdw", to_string_fixed(cfg.rvdw_nm, 2)}
     });
     return out.str();
 }
-
-void write_md_spec(const Config& cfg, const MdSpec& spec) {
-    write_text(cfg.systemDir() / spec.filename, production_mdp(cfg, spec));
-}
-
-} // namespace
 
 std::string thermostat_block(const Config& cfg) {
     std::ostringstream out;
@@ -113,42 +54,72 @@ void write_em_mdp(const Config& cfg) {
         {"nsteps", std::to_string(cfg.em_nsteps)}
     });
     blank(out);
-    emit(out, {
-        {"cutoff-scheme", "Verlet"},
-        {"nstlist", "10"},
-        {"vdwtype", "Cut-off"},
-        {"rvdw", "1.1"},
-        {"coulombtype", "reaction-field"},
-        {"rcoulomb", "1.1"}
-    });
+    out << nonbonded_block(cfg);
     blank(out);
-    emit(out, {{"constraints", "none"}, {"nstenergy", "10"}});
+    emit(out, {
+        {"constraints", "none"},
+        {"constraint-algorithm", "Lincs"}, {"lincs-order", "8"}, {"lincs-iter", "2"},
+        {"lincs-warnangle", "90"},
+        {"nstenergy", "10"}});
+    if (cfg.dry_run) return;
     write_text(cfg.systemDir() / "emin.mdp", out.str());
 }
 
 void write_nvt_mdp(const Config& cfg) {
     write_md_spec(cfg, {"NVT equilibration for Martini coarse-grained system", "nvt.mdp",
-                        cfg.nvt_dt_ps, cfg.nvt_nsteps, false, false, true});
+                        cfg.nvt_dt_ps, cfg.nvt_nsteps, false, false, true,
+                        kTauP, 0.0, kSeedNvt});
 }
 
 void write_npt_mdp(const Config& cfg) {
     write_md_spec(cfg, {"NPT equilibration for Martini coarse-grained system", "npt.mdp",
-                        cfg.npt_dt_ps, cfg.npt_nsteps, true, true, false, 4.0, "Potential-shift"});
+                        cfg.npt_dt_ps, cfg.npt_nsteps, true, true, false, kTauP,
+                        0.0, kSeedNpt});
 }
 
 void write_md_mdp(const Config& cfg) {
     write_md_spec(cfg, {"Production MD for Martini coarse-grained system; total time = " + std::to_string(cfg.md_total_us) + " us",
-                        "md.mdp", cfg.md_dt_ps, cfg.mdNsteps()});
+                        "md.mdp", cfg.md_dt_ps, cfg.mdNsteps(),
+                        true, true, false, kTauP, 0.0, kSeedProduction});
 }
 
-void write_metad_mdp(const Config& cfg) {
-    write_md_spec(cfg, {"Metadynamics MD for Martini coarse-grained system",
-                        "md_metad.mdp", cfg.md_dt_ps, cfg.mdNsteps()});
+std::filesystem::path write_md_chunk_mdp(const Config& cfg, int chunk,
+                                         std::int64_t chunk_nsteps, double tinit_ps) {
+    const std::filesystem::path name = "md_chunk_" + zero_padded(chunk) + ".mdp";
+    write_md_spec(cfg, {"Adaptive chunk " + std::to_string(chunk) + " MD; steps = " +
+                            std::to_string(chunk_nsteps) + ", tinit = " + fp(tinit_ps) + " ps",
+                        name, cfg.md_dt_ps, chunk_nsteps,
+                        /*continuation=*/true, /*pressure=*/true, /*gen_vel=*/false,
+                        /*tau_p=*/kTauP,
+                        /*tinit_ps=*/tinit_ps, /*segment_index=*/kSeedAdaptiveBase + chunk});
+    return cfg.systemDir() / name;
 }
 
-void write_md_chunk_mdp(const Config& cfg, std::int64_t chunk_nsteps) {
-    write_md_spec(cfg, {"Adaptive chunk MD for Martini coarse-grained system; chunk steps = " + std::to_string(chunk_nsteps),
-                        "md_chunk.mdp", cfg.md_dt_ps, chunk_nsteps});
+std::filesystem::path write_relax_mdp(const Config& cfg, std::int64_t nsteps) {
+    const auto stride = static_cast<int>(std::max<std::int64_t>(1, nsteps / std::max(1, cfg.relax_frames)));
+    const std::filesystem::path name = "md_relax.mdp";
+    write_md_spec(cfg, {"Single-protomer relaxation before packing; steps = " + std::to_string(nsteps) +
+                            ", ~" + std::to_string(cfg.relax_frames) + " frames",
+                        name, cfg.md_dt_ps, nsteps,
+                        /*continuation=*/true, /*pressure=*/true, /*gen_vel=*/false,
+                        /*tau_p=*/kTauP, /*tinit_ps=*/0.0, /*segment_index=*/kSeedRelax,
+                        /*nst_xtc=*/stride});
+    return cfg.systemDir() / name;
+}
+
+std::filesystem::path write_metad_batch_mdp(const Config& cfg, int batch,
+                                            std::int64_t batch_nsteps, double tinit_ps,
+                                            int walker) {
+    const std::filesystem::path name =
+        "md_metad_" + zero_padded(batch) + (walker > 0 ? "_w" + std::to_string(walker) : "") + ".mdp";
+    write_md_spec(cfg, {"Metadynamics batch " + std::to_string(batch) + " MD; steps = " +
+                            std::to_string(batch_nsteps) + ", tinit = " + fp(tinit_ps) + " ps",
+                        name, cfg.md_dt_ps, batch_nsteps,
+                        /*continuation=*/true, /*pressure=*/true, /*gen_vel=*/false,
+                        /*tau_p=*/kTauP,
+                        /*tinit_ps=*/tinit_ps,
+                        /*segment_index=*/kSeedMetadBase + batch + walker * kSeedWalkerStride});
+    return cfg.systemDir() / name;
 }
 
 } // namespace cg

@@ -5,12 +5,12 @@
 #include "StringUtils.hpp"
 
 #include <algorithm>
-#include <fstream>
 #include <iostream>
 #include <numeric>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace cg {
 namespace {
@@ -40,12 +40,9 @@ std::string format_index_line(const std::vector<int>& atom_ids, int width) {
 }
 
 IndexGroups read_index(const std::filesystem::path& ndx_path) {
-    std::ifstream in(ndx_path);
-    if (!in) throw std::runtime_error("Cannot read index file " + ndx_path.string());
-
     IndexGroups groups;
     std::string current;
-    for (std::string line; std::getline(in, line);) {
+    for (auto line : read_lines(ndx_path)) {
         line = trim(line);
         if (line.empty()) continue;
         if (starts_with(line, "[") && ends_with(line, "]")) {
@@ -69,12 +66,13 @@ void write_index(const IndexGroups& groups, const std::filesystem::path& ndx_pat
 void generate_index(const Shell& sh, const Config& cfg, const std::filesystem::path& gro_file) {
     const auto ndx_path = cfg.resultDir() / "index.ndx";
     const auto input_path = cfg.resultDir() / "tmp_ndx_input.txt";
-    write_text(input_path, "q\n");
+    if (!sh.dryRun()) write_text(input_path, "q\n");
 
     sh.run({"/bin/bash", "-lc", shell_quote(cfg.gmx) +
         " make_ndx -f " + shell_quote(gro_file.string()) +
         " -o " + shell_quote(ndx_path.string()) +
-        " < " + shell_quote(input_path.string())});
+        " < " + shell_quote(input_path.string())},
+        cfg.resultDir());
 
     if (sh.dryRun()) {
         std::cerr << "[dry-run] Skipping index parsing because " << ndx_path << " was not generated.\n";
@@ -82,6 +80,25 @@ void generate_index(const Shell& sh, const Config& cfg, const std::filesystem::p
     }
 
     auto groups = read_index(ndx_path);
+
+    if (const auto detected = groups.find("Protein"); detected != groups.end()) {
+        const auto expected = static_cast<std::size_t>(cfg.n_prot) * static_cast<std::size_t>(cfg.atoms_per_prot);
+        if (detected->second.size() != expected) {
+            const auto actual = detected->second.size();
+            std::string hint;
+            if (cfg.n_prot > 0 && actual % static_cast<std::size_t>(cfg.n_prot) == 0)
+                hint = " For " + std::to_string(cfg.n_prot) + " copies this implies --atoms-per-prot " +
+                       std::to_string(actual / static_cast<std::size_t>(cfg.n_prot)) + ".";
+            throw std::runtime_error(
+                "Protein bead count mismatch in " + gro_file.string() + ": GROMACS detects " +
+                std::to_string(actual) + " protein bead(s), but --n-prot " + std::to_string(cfg.n_prot) +
+                " x --atoms-per-prot " + std::to_string(cfg.atoms_per_prot) + " = " + std::to_string(expected) +
+                "." + hint +
+                " Count the beads martinize2 actually produced with:"
+                "  grep -c '^ATOM' " + cfg.cgPath().string());
+        }
+    }
+
     std::vector<int> protein;
     protein.reserve(static_cast<std::size_t>(cfg.n_prot * cfg.atoms_per_prot));
 
@@ -94,6 +111,7 @@ void generate_index(const Shell& sh, const Config& cfg, const std::filesystem::p
     protein = sorted_unique(std::move(protein));
     groups["Protein"] = protein;
     groups["AllProteins"] = protein;
+
 
     if (const auto it = groups.find("System"); it != groups.end()) {
         const std::set<int> protein_set(protein.begin(), protein.end());

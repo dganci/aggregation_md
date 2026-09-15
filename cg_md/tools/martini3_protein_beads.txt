@@ -1,0 +1,22 @@
+# Every bead type `martinize2 -ff martini3IDP` produces for the constructs of
+# this project. It is the set tools/make_lambda_itp.py rescales against water,
+# and the one Preparer::verify_lambda_coverage() requires to be complete.
+#
+# Why a fixed list and not the types found in the topologies at hand: the
+# first lambda 1.10 file was generated when only 1-108 and 1-263 sat under
+# runs/, and covered 22 types. 5x116-347 and the full length use 23 - TC6 as
+# well. With that file 5x116-347 would have started without an error, but with
+# TC6-water at stock strength while everything else was at lambda 1.10: a
+# different force field from the other constructs, and the comparison of
+# aggregation propensities - the one thing this campaign measures - would
+# have been meaningless, with nothing in the logs to say so.
+#
+# Coverage per construct (measured):
+#   1-108    20      116-347  23      fl (1-470)  23
+#   1-263    22      417-470  22      union       23
+#
+# Regenerate with tools/collect_bead_types.sh when a construct is added.
+# Rescaling a type no system uses costs nothing; leaving out one that is used
+# costs the whole comparison.
+
+C6 P2 P5 Q5 Q5n SC2 SC3 SC4 SP1 SP2 SP2a SP5 SQ3p SQ4p SQ5n TC3 TC4 TC5 TC6 TN5a TN6 TN6d TP1

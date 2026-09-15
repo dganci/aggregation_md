@@ -1,0 +1,39 @@
+; Production MD for Martini coarse-grained system; total time = 10.000000 us
+integrator = md
+dt = 0.010000
+nsteps = 1000000000
+tinit = 0.000000
+continuation = yes
+comm-mode = Linear
+
+nstxout = 0
+nstvout = 0
+nstenergy = 200
+nstlog = 2000
+nstxout-compressed = 200
+
+tcoupl = V-rescale
+tc-grps = Protein W ION
+tau-t = 1.0 1.0 1.0
+ref-t = 310.000000 310.000000 310.000000
+ld-seed = 20260731
+
+pcoupl = C-rescale
+pcoupltype = isotropic
+tau-p = 12.000000
+ref-p = 1.0
+compressibility = 3e-4
+
+constraints = none
+gen_vel = no
+
+cutoff-scheme = Verlet
+nstlist = 20
+coulombtype = Reaction-Field
+rcoulomb = 1.10
+epsilon_r = 15.0
+epsilon_rf = 0
+coulomb-modifier = Potential-shift
+vdwtype = Cut-off
+vdw-modifier = Potential-shift
+rvdw = 1.10

@@ -1,0 +1,14 @@
+;;; PHOSPHOSERINE - riconoscimento lato input (tutti-atomi, charmm)
+[ modification ]
+SER-phos
+[ atoms ]
+P  {"element": "P", "PTM_atom": true}
+O1 {"element": "O", "PTM_atom": true}
+O2 {"element": "O", "PTM_atom": true}
+O3 {"element": "O", "PTM_atom": true}
+OG {"element": "O"}
+[ edges ]
+OG P
+P O1
+P O2
+P O3

@@ -1,0 +1,10 @@
+;;; PHOSPHOSERINE - parametri Martini3 CG (SER modificata, non un blocco nuovo)
+[ modification ]
+SER-PO4
+[ atoms ]
+BB  {"PTM_atom": false}
+SC1 {"PTM_atom": false, "resname": "SER", "replace": {"atype": "Q5n", "charge": -2}}
+[ edges ]
+BB SC1
+[ bonds ]
+BB SC1 1 0.35 4500

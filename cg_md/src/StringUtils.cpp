@@ -4,6 +4,7 @@
 #include <cctype>
 #include <iomanip>
 #include <sstream>
+#include <utility>
 
 namespace cg {
 
@@ -28,10 +29,24 @@ std::vector<std::string> split_ws(const std::string& s) {
     return out;
 }
 
+std::vector<std::string> split_csv(const std::string& csv) {
+    std::istringstream in(csv);
+    std::vector<std::string> out;
+    for (std::string item; std::getline(in, item, ',');) {
+        auto t = trim(item);
+        if (!t.empty()) out.push_back(std::move(t));
+    }
+    return out;
+}
+
 std::string join(const std::vector<std::string>& xs, const std::string& sep) {
     std::ostringstream out;
     for (std::size_t i = 0; i < xs.size(); ++i) out << (i ? sep : "") << xs[i];
     return out.str();
+}
+
+std::string repeat_csv(const std::string& value, std::size_t n) {
+    return join(std::vector<std::string>(n, value), ",");
 }
 
 std::string shell_quote(const std::string& s) {

@@ -2,7 +2,11 @@
 #include "FileUtils.hpp"
 #include "StringUtils.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -54,6 +58,42 @@ GroNormalizationStats normalize_gro_ion_names(const std::filesystem::path& gro_p
 
     if (stats.total()) write_lines(gro_path, lines);
     return stats;
+}
+
+std::array<std::array<double, 3>, 3> read_gro_box_vectors(const std::filesystem::path& gro_path) {
+    const auto lines = read_lines(gro_path);
+    for (auto it = lines.rbegin(); it != lines.rend(); ++it) {
+        std::istringstream in(*it);
+        double v[9] = {};
+        if (!(in >> v[0] >> v[1] >> v[2])) continue;
+        for (int i = 3; i < 9; ++i) {
+            if (!(in >> v[i])) { v[i] = 0.0; }
+        }
+        return {{{v[0], v[3], v[4]}, {v[5], v[1], v[6]}, {v[7], v[8], v[2]}}};
+    }
+    throw std::runtime_error("Could not read a box line from " + gro_path.string());
+}
+
+double min_image_distance_nm(const std::array<std::array<double, 3>, 3>& box) {
+    double best = std::numeric_limits<double>::max();
+    for (int i = -2; i <= 2; ++i) {
+        for (int j = -2; j <= 2; ++j) {
+            for (int k = -2; k <= 2; ++k) {
+                if (i == 0 && j == 0 && k == 0) continue;
+                double len2 = 0.0;
+                for (int d = 0; d < 3; ++d) {
+                    const double c = i * box[0][d] + j * box[1][d] + k * box[2][d];
+                    len2 += c * c;
+                }
+                best = std::min(best, len2);
+            }
+        }
+    }
+    return std::sqrt(best);
+}
+
+bool periodic_margin_ok(double dmax_nm, double image_nm, double rcut_nm) {
+    return image_nm >= dmax_nm + 2.0 * rcut_nm;
 }
 
 } // namespace cg

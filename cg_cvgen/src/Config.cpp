@@ -30,7 +30,8 @@ int to_int(const std::string& s, const std::string& opt) {
 } // namespace
 
 void Config::validate() const {
-    require_file(input_colvar, "input COLVAR file");
+    if (input_colvar.string().find_first_of("*?[") == std::string::npos)
+        require_file(input_colvar, "input COLVAR file");
     require_file(backend, "Python backend");
     if (output_dir.empty()) throw std::runtime_error("--output-dir cannot be empty");
     if (python.empty()) throw std::runtime_error("--python cannot be empty");
@@ -53,6 +54,7 @@ std::string Config::to_json() const {
         << "  \"input_colvar\": \"" << json_escape(std::filesystem::absolute(input_colvar).string()) << "\",\n"
         << "  \"output_dir\": \"" << json_escape(std::filesystem::absolute(output_dir).string()) << "\",\n"
         << "  \"lags\": " << to_json_array(lags) << ",\n"
+        << "  \"auto_lags\": " << (auto_lags ? "true" : "false") << ",\n"
         << "  \"selected_lag\": " << selected_lag << ",\n"
         << "  \"n_cvs\": " << n_cvs << ",\n"
         << "  \"hidden_layers\": " << to_json_array(hidden_layers) << ",\n"
@@ -64,6 +66,7 @@ std::string Config::to_json() const {
         << "  \"split_ratio\": " << split_ratio << ",\n"
         << "  \"margin\": " << margin << ",\n"
         << "  \"feature_regex\": \"" << json_escape(feature_regex) << "\",\n"
+        << "  \"permutation_invariant\": " << (permutation_invariant ? "true" : "false") << ",\n"
         << "  \"save_embeddings\": " << (save_embeddings ? "true" : "false") << ",\n"
         << "  \"verbose\": " << (verbose ? "true" : "false") << "\n"
         << "}\n";
@@ -76,7 +79,8 @@ std::string Config::summary() const {
         << "  input_colvar      = " << input_colvar << '\n'
         << "  output_dir        = " << output_dir << '\n'
         << "  backend           = " << backend << '\n'
-        << "  lags              = " << to_json_array(lags) << '\n'
+        << "  lags              = " << to_json_array(lags)
+        << (auto_lags ? "  (overridden by the implied-timescale plateau unless --no-auto-lags)" : "") << '\n'
         << "  selected_lag      = " << (selected_lag > 0 ? std::to_string(selected_lag) : "auto") << '\n'
         << "  n_cvs             = " << n_cvs << '\n'
         << "  hidden_layers     = " << to_json_array(hidden_layers) << '\n'
@@ -90,9 +94,16 @@ void print_help(const char* exe) {
     std::cout
         << "Usage:\n  " << exe << " --input-colvar COLVAR --output-dir CVs [options]\n\n"
         << "Core options:\n"
-        << "  --input-colvar PATH          Unbiased COLVAR file produced by PLUMED\n"
+        << "  --input-colvar PATH          Unbiased COLVAR file produced by PLUMED. May be a glob,\n"
+        << "                               e.g. 'runs/SYS/COLVAR_chunk_*.dat' for an adaptive run\n"
+        << "                               (files are concatenated in time order, duplicated\n"
+        << "                               chunk-boundary frames dropped)\n"
         << "  --output-dir PATH            Directory receiving CVs_torchscript.pt and parameters\n"
-        << "  --lags 5,7,10,12             Lag times to score\n"
+        << "  --lags 50,100,250,500        Lag times to score, in FRAMES. One frame is\n"
+        << "                               --md-dt-ps x --plumed-stride of the run that wrote the\n"
+        << "                               COLVAR (1 ps with cg_md's defaults); the backend reads\n"
+        << "                               the real spacing from the time column and prints it\n"
+        << "  --no-auto-lags               Do not derive the lags from the implied-timescale plateau\n"
         << "  --selected-lag N             Force final lag; default chooses best score\n"
         << "  --n-cvs N                    Number of DeepTICA CVs\n"
         << "  --hidden-layers 32,16        Neural-network hidden layers\n"
@@ -101,8 +112,22 @@ void print_help(const char* exe) {
         << "  --feature-regex REGEX        Columns used as model input\n"
         << "  --python CMD                 Python executable\n"
         << "  --backend PATH               cvgen_backend.py path\n"
+        << "  --no-permutation-invariant   Train on raw index-ordered features. Only correct for a\n"
+        << "                               single protomer pair; with more chains the CV then\n"
+        << "                               distinguishes states that differ only by chain numbering\n"
         << "  --save-embeddings            Store final embeddings\n"
-        << "  --dry-run                    Write config and print backend command only\n";
+        << "  --dry-run                    Write config and print backend command only\n"
+        << "\nTraining and scoring:\n"
+        << "  --lag-list 50,100            Synonym of --lags\n"
+        << "  --patience N                 Early-stopping patience, in epochs\n"
+        << "  --split-ratio F              Train fraction; the rest is validation (final fit uses 1)\n"
+        << "  --probe-size N               Frames per batch when scoring a trained model\n"
+        << "  --seed N                     Seed for numpy and torch\n"
+        << "  --margin X                   Widens the METAD grid bounds written to cv_params.pkl,\n"
+        << "                               as a fraction of the CV range sampled in training. The\n"
+        << "                               bias would abort if the CV ever left that grid, and\n"
+        << "                               pushing it past the sampled range is what METAD is for\n"
+        << "  --verbose                    Per-epoch training output\n";
 }
 
 Config parse_args(int argc, char** argv) {
@@ -117,6 +142,7 @@ Config parse_args(int argc, char** argv) {
         {"--lags", [&](int& i){ cfg.lags = parse_int_list(take(i, argc, argv, argv[i])); }},
         {"--lag-list", [&](int& i){ cfg.lags = parse_int_list(take(i, argc, argv, argv[i])); }},
         {"--selected-lag", [&](int& i){ cfg.selected_lag = to_int(take(i, argc, argv, argv[i]), "--selected-lag"); }},
+        {"--no-auto-lags", [&](int&){ cfg.auto_lags = false; }},
         {"--n-cvs", [&](int& i){ cfg.n_cvs = to_int(take(i, argc, argv, argv[i]), "--n-cvs"); }},
         {"--hidden-layers", [&](int& i){ cfg.hidden_layers = parse_layers(take(i, argc, argv, argv[i])); }},
         {"--max-epochs", [&](int& i){ cfg.max_epochs = to_int(take(i, argc, argv, argv[i]), "--max-epochs"); }},
@@ -133,6 +159,7 @@ Config parse_args(int argc, char** argv) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") { print_help(argv[0]); std::exit(0); }
         if (arg == "--save-embeddings") { cfg.save_embeddings = true; continue; }
+        if (arg == "--no-permutation-invariant") { cfg.permutation_invariant = false; continue; }
         if (arg == "--dry-run") { cfg.dry_run = true; continue; }
         if (arg == "--verbose") { cfg.verbose = true; continue; }
         const auto it = opts.find(arg);

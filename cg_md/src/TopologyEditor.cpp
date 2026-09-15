@@ -15,11 +15,12 @@ std::string include_line(const std::filesystem::path& path) {
 }
 
 std::vector<std::string> martini_includes(const std::filesystem::path& martini_dir,
-                                          const std::string& itp) {
+                                          const std::string& itp,
+                                          const std::string& main_itp) {
     const auto dir = std::filesystem::absolute(martini_dir).lexically_normal();
 
     return {
-        include_line(dir / "martini_v3.0.0.itp"),
+        include_line(dir / main_itp),
         include_line(dir / "martini_v3.0.0_ions_v1.itp"),
         include_line(dir / "martini_v3.0.0_solvents_v1.itp"),
         "#include \"" + itp + "\""
@@ -53,8 +54,9 @@ void patch_martini_topology(const std::filesystem::path& topology_path,
                             const std::filesystem::path& martini_dir,
                             const std::string& molecule_name,
                             int n_prot,
-                            const std::string& itp_filename) {
-    const auto includes = martini_includes(martini_dir, itp_filename);
+                            const std::string& itp_filename,
+                            const std::string& main_itp) {
+    const auto includes = martini_includes(martini_dir, itp_filename, main_itp);
     const auto lines = read_lines(topology_path);
     std::vector<std::string> out = includes;
 
@@ -76,6 +78,25 @@ void patch_martini_topology(const std::filesystem::path& topology_path,
     }
 
     write_lines(topology_path, out);
+}
+
+void write_single_molecule_topology(const std::filesystem::path& src,
+                                    const std::filesystem::path& dst) {
+    std::vector<std::string> out;
+    bool in_molecules = false, seen_first = false;
+
+    for (const auto& line : read_lines(src)) {
+        const auto t = trim(line);
+        if (starts_with(t, "[")) in_molecules = starts_with(t, "[ molecules ]");
+
+        const bool is_entry = in_molecules && !t.empty() && !starts_with(t, ";") && !starts_with(t, "[");
+        if (!is_entry) { out.push_back(line); continue; }
+        if (seen_first) continue;
+
+        out.push_back(molecule_line(split_ws(t).front(), {}, 1));
+        seen_first = true;
+    }
+    write_lines(dst, out);
 }
 
 } // namespace cg

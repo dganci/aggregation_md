@@ -1,0 +1,22 @@
+#	Smoke manifest: ONE small, fast entry that exercises the entire stack.
+#
+#	  ./tools/batch_host.sh --check      MANIFEST=tools/sims_smoke.tsv
+#	  MANIFEST=tools/sims_smoke.tsv ./tools/batch_host.sh --foreground
+#
+#	This is not science - it is the end-to-end test that tools/sims.tsv is too
+#	expensive to be. It runs martinize2, Packmol, insane, grompp, energy
+#	minimization, NVT, NPT and two adaptive chunks with PLUMED, so every stage
+#	the real batch depends on is executed for real, in minutes rather than days.
+#
+#	Deliberately small: 2 copies instead of 5, a 60 A packing sphere instead of
+#	145, 500 equilibration steps instead of 10000/50000, and 0.004 us of
+#	production. --relax is omitted: relaxing one protomer is ~110 minutes and
+#	tests nothing this does not.
+#
+#	--atoms-per-prot 236 is the measured bead count of the 1-108 protomer. See
+#	RUNBOOK.md for why that number matters and how it was got wrong.
+#	---------------------------------------------------------------------------
+#	name					flags
+#	---------------------------------------------------------------------------
+
+smoke-1-108	--n-prot 2 --protomer 1-108_1 --seq-length 108 --atoms-per-prot 236 --ss-string CHHHHHHHHHCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCHHHCHHHHHCCCCCCHHHHCCCCCCCCCCCCCCCCHHHHHHCCHHHHHCCCCC --no-elastic --seed 7 --run-tag smoke --packmol-cluster-radius-A 60 --packmol-radius-A 25 --packmol-tolerance-A 2.5 --solvation-mode insane --box-margin-nm 1.0 --salt-M 0.15 --temperature-K 310 --epsilon-r 15 --rcoulomb-nm 1.1 --rvdw-nm 1.1 --nstlist 20 --nvt-dt-ps 0.01 --nvt-nsteps 500 --npt-dt-ps 0.01 --npt-nsteps 500 --md-dt-ps 0.01 --thermostat protein-solvent --contact-r0-nm 0.7 --contact-nn 6 --contact-mm 12 --plumed-stride 200 --nst-xtc 200 --nst-energy 200 --nst-log 2000 --relax --distinct-copies --relax-us 0.002 --martini-lambda-pw 1.10 --adaptive --adaptive-chunk-us 0.002 --adaptive-max-total-us 0.004 --adaptive-min-total-us 0.002 --adaptive-min-cn-range 0 --adaptive-min-rg-range 0 --adaptive-min-contact-patterns 10 --adaptive-min-lcc-unique 2 --adaptive-min-cn-transitions 20 --adaptive-min-bidirectional-events 10 --adaptive-max-pattern-growth 1.10 --adaptive-max-pattern-jsd 0.02 --adaptive-min-effective-samples 50 --adaptive-min-assembly-events 30 --adaptive-event-residence-ps 100 --adaptive-min-time-over-its 10 --adaptive-pair-contact-threshold 1.0

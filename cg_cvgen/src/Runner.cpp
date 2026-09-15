@@ -8,6 +8,18 @@
 #include <stdexcept>
 
 namespace cgcv {
+namespace {
+
+int normalize_exit_code(int status) {
+#ifdef _WIN32
+    return status;
+#else
+    if (status == 0) return 0;
+    return (status & 0xFF) == 0 ? status >> 8 : status;
+#endif
+}
+
+} // namespace
 
 int Runner::run() const {
     ensure_dir(cfg_.output_dir);
@@ -22,7 +34,7 @@ int Runner::run() const {
         return 0;
     }
 
-    const int code = std::system(cmd.c_str());
+    const int code = normalize_exit_code(std::system(cmd.c_str()));
     if (code != 0) throw std::runtime_error("CV backend failed with exit code " + std::to_string(code));
     return 0;
 }

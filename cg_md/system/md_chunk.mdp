@@ -1,0 +1,33 @@
+; Adaptive chunk MD for Martini coarse-grained system; chunk steps = 5000000
+integrator = md
+dt = 0.010000
+nsteps = 5000000
+tinit = 0.000000
+continuation = yes
+comm-mode = Linear
+
+nstxout = 0
+nstvout = 0
+nstenergy = 1000
+nstlog = 1000
+nstxout-compressed = 1000
+
+tcoupl = V-rescale
+tc-grps = Protein W ION
+tau-t = 1.0 1.0 1.0
+ref-t = 300.000000 300.000000 300.000000
+
+pcoupl = C-rescale
+pcoupltype = isotropic
+tau-p = 12.000000
+ref-p = 1.0
+compressibility = 3e-4
+
+constraints = none
+gen_vel = no
+
+cutoff-scheme = Verlet
+coulombtype = Reaction-Field
+rvdw = 1.1
+rcoulomb = 1.1
+coulomb-modifier = Potential-shift-verlet

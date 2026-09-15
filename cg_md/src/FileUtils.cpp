@@ -1,8 +1,11 @@
 #include "FileUtils.hpp"
 
+#include <algorithm>
+#include <cstdint>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <utility>
 
 namespace cg {
 
@@ -10,6 +13,24 @@ std::string read_text(const std::filesystem::path& path) {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("Cannot read " + path.string());
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+std::string read_tail(const std::filesystem::path& path, std::size_t max_bytes) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec) return {};
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+
+    const auto want = static_cast<std::streamoff>(std::min<std::uintmax_t>(size, max_bytes));
+    in.seekg(-want, std::ios::end);
+    if (!in) in.seekg(0, std::ios::beg);
+
+    std::string out(static_cast<std::size_t>(want), '\0');
+    in.read(out.data(), want);
+    out.resize(static_cast<std::size_t>(in.gcount()));
+    return out;
 }
 
 std::vector<std::string> read_lines(const std::filesystem::path& path) {

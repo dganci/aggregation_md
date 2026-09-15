@@ -1,0 +1,33 @@
+# --- build e output di simulazione -----------------------------------------
+*/build/
+cg_md/runs/
+cg_md/results/
+cg_md/archivio/
+cg_md/force_fields_extra/
+
+# --- librerie di terze parti: dentro solo la copia patchata di mlcolvar -----
+cg_md/lib/cg2at/
+cg_md/lib/metatomic/
+cg_md/lib/martini_v300/
+cg_md/lib/mlcolvar/*
+!cg_md/lib/mlcolvar/mlcolvar_copy/
+
+# --- scarti di lavoro -------------------------------------------------------
+__pycache__/
+*.pyc
+*.bak-*
+.DS_Store
+.vscode/
+
+# --- file che una run lascia in giro nella radice di cg_md ------------------
+cg_md/PLUMED.OUT
+cg_md/bck.*.PLUMED.OUT
+cg_md/mdout.mdp
+cg_md/rmsd-clust.xpm
+
+# --- traiettorie e stati, ovunque -------------------------------------------
+*.xtc
+*.trr
+*.edr
+*.cpt
+*.tpr

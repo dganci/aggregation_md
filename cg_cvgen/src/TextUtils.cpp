@@ -4,6 +4,7 @@
 #include <cctype>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 namespace cgcv {
 
@@ -74,14 +75,19 @@ std::string to_json_array(const std::vector<int>& values) {
 }
 
 std::filesystem::path default_backend_path(const char* argv0) {
-    const auto exe = std::filesystem::absolute(argv0 ? argv0 : "cg_cvgen");
-    const auto bin_dir = exe.parent_path();
-    const std::vector<std::filesystem::path> candidates = {
-        std::filesystem::current_path() / "scripts" / "cvgen_backend.py",
-        bin_dir / "scripts" / "cvgen_backend.py",
-        bin_dir.parent_path() / "scripts" / "cvgen_backend.py",
-        bin_dir.parent_path().parent_path() / "scripts" / "cvgen_backend.py"
-    };
+    std::vector<std::filesystem::path> bin_dirs;
+#ifdef __linux__
+    std::error_code ec;
+    const auto real = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec) bin_dirs.push_back(real.parent_path());
+#endif
+    bin_dirs.push_back(std::filesystem::absolute(argv0 ? argv0 : "cg_cvgen").parent_path());
+
+    std::vector<std::filesystem::path> candidates = {
+        std::filesystem::current_path() / "scripts" / "cvgen_backend.py"};
+    for (const auto& bin_dir : bin_dirs)
+        for (const auto& dir : {bin_dir, bin_dir.parent_path(), bin_dir.parent_path().parent_path()})
+            candidates.push_back(dir / "scripts" / "cvgen_backend.py");
     for (const auto& p : candidates) if (std::filesystem::exists(p)) return p;
     return candidates.front();
 }
