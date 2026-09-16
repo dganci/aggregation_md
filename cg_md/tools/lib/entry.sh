@@ -6,9 +6,6 @@ fatal_in() {
     grep -qF -f <(printf '%s\n' "${FATAL_PATTERNS[@]}")
 }
 
-echo
-say "=== batch start $(date -Is) ==="
-
 run_entry() {
   local i="$1"
   local name="${names[$i]}"

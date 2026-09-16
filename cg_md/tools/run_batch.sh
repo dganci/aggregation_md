@@ -142,6 +142,16 @@ if [[ "$JOBS" -gt 1 ]]; then
   fi
 fi
 
+# Il marcatore di avvio, e non e' cosmetico: e' l'unica prova, in status.txt,
+# che il batch e' arrivato a partire. Viveva in lib/entry.sh, dove pero' girava
+# al momento del `source` - prima che say() fosse definita, quattro righe piu'
+# sotto - quindi falliva con "say: command not found" e la riga non veniva MAI
+# scritta. Che e' esattamente la firma del 2026-08-03: nessuna traccia nei log
+# di un batch che credi partito. Va emessa qui, dopo il preflight e il controllo
+# dello spazio, cioe' quando la partenza e' un fatto e non un'intenzione.
+echo
+say "=== batch start $(date -Is) ==="
+
 OUTCOME_DIR="$(mktemp -d)"
 trap 'rm -rf "$OUTCOME_DIR"' EXIT
 
