@@ -1,16 +1,16 @@
 # shellcheck shell=bash
-# Assegnazione delle GPU alle entry concorrenti.
+# GPU assignment across the concurrent entry pool.
 #
-# L'invariante che conta: due entry vive non devono MAI vedere lo stesso
-# dispositivo. Il caso che rompe l'aritmetica "indice modulo numero di GPU" e'
-# che le entry finiscono in ordine sparso - 5x1-108 e 5x1-263 differiscono di un
-# ordine di grandezza in dimensione - quindi la quinta puo' partire mentre la
-# prima e' ancora viva, e prenderebbe il suo stesso dispositivo.
+# The invariant that matters: two live entries must NEVER see the same device.
+# What breaks "entry index modulo number of GPUs" is that entries finish out of
+# order - 5x1-108 and 5x116-347 differ by a factor of ten in size, and the
+# adaptive stop condition fires at different times - so the fifth entry can
+# start while the first is still running, and would take its device.
 source "$ROOT/tools/lib/gpu.sh"
 
-check "gpu_devices espande un conteggio" "$(GPUS=4 gpu_devices | tr '\n' ' ')" "0 1 2 3 "
-check "gpu_devices espande una lista"    "$(GPUS=0,2,5 gpu_devices | tr '\n' ' ')" "0 2 5 "
-check "senza GPUS non espande nulla"     "$(GPUS= gpu_devices | tr '\n' ' ')" ""
+check "gpu_devices expands a count" "$(GPUS=4 gpu_devices | tr '\n' ' ')" "0 1 2 3 "
+check "gpu_devices expands a list"  "$(GPUS=0,2,5 gpu_devices | tr '\n' ' ')" "0 2 5 "
+check "without GPUS it expands nothing" "$(GPUS= gpu_devices | tr '\n' ' ')" ""
 
 export GPU_LOCK_DIR="$TMP/gpulocks"
 rm -rf "$GPU_LOCK_DIR"
@@ -27,10 +27,10 @@ rm -rf "$GPU_LOCK_DIR"
   wait
 )
 
-check "ogni lavoro ha ricevuto un dispositivo" \
+check "every job was handed a device" \
       "$(grep -c start "$TMP/gpu_used.txt" | tr -d ' ')" "4"
-check "sono stati usati solo i dispositivi dichiarati" \
+check "only the declared devices were used" \
       "$(awk '{print $1}' "$TMP/gpu_used.txt" | sort -u | tr '\n' ' ')" "0 1 "
-check "nessuna sovrapposizione sullo stesso dispositivo" \
+check "no two jobs overlapped on one device" \
       "$(awk '{if($3=="start"){c[$1]++; if(c[$1]>1) bad=1} else c[$1]--}
-              END{print bad ? "COLLISIONE" : "ok"}' "$TMP/gpu_used.txt")" "ok"
+              END{print bad ? "COLLISION" : "ok"}' "$TMP/gpu_used.txt")" "ok"
