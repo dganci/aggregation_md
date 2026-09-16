@@ -5,7 +5,7 @@ cg_md/results/
 cg_md/archivio/
 cg_md/force_fields_extra/
 
-# --- librerie di terze parti: dentro solo la copia patchata di mlcolvar -----
+# --- third-party libraries: only the patched copy of mlcolvar goes in ------
 cg_md/lib/cg2at/
 cg_md/lib/metatomic/
 cg_md/lib/martini_v300/
@@ -19,7 +19,7 @@ __pycache__/
 .DS_Store
 .vscode/
 
-# --- file che una run lascia in giro nella radice di cg_md ------------------
+# --- files a run leaves lying around in the cg_md root ---------------------
 cg_md/PLUMED.OUT
 cg_md/bck.*.PLUMED.OUT
 cg_md/mdout.mdp

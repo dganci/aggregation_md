@@ -155,7 +155,7 @@ void Workflow::check_inputs() {
         if (!std::filesystem::exists(itp))
             throw std::runtime_error(
                 "--martini-lambda-pw " + to_string_fixed(cfg_.martini_lambda_pw, 2) +
-                " richiede " + itp.string() + ", che non esiste. Generalo con:\n"
+                " requires " + itp.string() + ", which does not exist. Generate it with:\n"
                 "  python3 tools/make_lambda_itp.py " + to_string_fixed(cfg_.martini_lambda_pw, 2));
     }
 
