@@ -108,7 +108,18 @@ CG_TEST(dynamics_mdps_match_the_martini_reference) {
         const auto text = read_text(cfg.systemDir() / name);
         CG_CHECK(contains(text, "nsttcouple = 20"));
         CG_CHECK(contains(text, "nstpcouple = 20"));
-        CG_CHECK(contains(text, "tau-p = 4.000000"));
+        // 12.0, not the 4.0 the Martini reference mdp carries. GROMACS 2025
+        // requires tau-p >= 25 * nstpcouple * dt for C-rescale, which at
+        // nstpcouple = 20 and dt = 10 fs is 5.0 ps, and grompp treats falling
+        // short as a fatal warning. The reference value predates that check
+        // (and Berendsen-era barostats), so the pair (tau-p 4, nstpcouple 20)
+        // simply cannot be run on a current GROMACS: every NPT grompp aborted.
+        // Satisfying the criterion by lowering nstpcouple instead would keep
+        // tau-p at the reference but break nstpcouple = nstlist, which is what
+        // makes the coupling cheap; 12.0 is itself a standard Martini value and
+        // clears the floor by 2.4x, so nstlist or dt can change without this
+        // silently breaking again.
+        CG_CHECK(contains(text, "tau-p = 12.000000"));
         CG_CHECK(contains(text, "refcoord-scaling = all"));
         CG_CHECK(contains(text, "nstcomm = 100"));
         CG_CHECK(contains(text, "verlet-buffer-tolerance = -1.0000"));

@@ -3,6 +3,7 @@
 #include "FileUtils.hpp"
 #include "GromacsDriver.hpp"
 #include "GroUtils.hpp"
+#include "IndexBuilder.hpp"
 #include "MdpWriter.hpp"
 #include "Shell.hpp"
 #include "StringUtils.hpp"
@@ -64,22 +65,62 @@ void RelaxRunner::build_system() {
     if (!sh_.dryRun()) normalize_gro_ion_names(dir() / "solvated.gro");
 }
 
+std::filesystem::path RelaxRunner::write_relax_index() const {
+    // Only protein-solvent names a group GROMACS cannot derive by itself;
+    // "System" and the legacy "Protein W ION" both resolve without an index.
+    if (cfg_.thermostat_mode != "protein-solvent") return {};
+
+    const auto ndx = dir() / "index.ndx";
+    if (sh_.dryRun()) return ndx;
+
+    // Written directly rather than by driving `gmx make_ndx` from stdin. Its
+    // groups are numbered from 0 = System and a newly made one is APPENDED, so
+    // there is no fixed number to rename: `name 0 ...` would rename System, and
+    // the coupling groups would then overlap on every protein bead - which
+    // grompp rejects, just with a different message.
+    //
+    // The layout is known instead: the relaxation box is one protomer followed
+    // by solvent, because both insane and `editconf`+`gmx solvate` place the
+    // solute first. Its size is --atoms-per-prot, which verify_bead_count()
+    // has already checked against what martinize2 actually produced.
+    const auto lines = read_lines(dir() / "em.gro");
+    if (lines.size() < 2) throw std::runtime_error("Cannot read " + (dir() / "em.gro").string());
+    const int total = std::stoi(trim(lines[1]));
+    const int protein = cfg_.atoms_per_prot;
+    if (protein <= 0 || protein >= total)
+        throw std::runtime_error(
+            "Relaxation index: --atoms-per-prot is " + std::to_string(protein) +
+            " but the solvated box has " + std::to_string(total) + " particles.");
+
+    IndexGroups groups;
+    auto& prot = groups["Protein"];
+    for (int i = 1; i <= protein; ++i) prot.push_back(i);
+    auto& rest = groups["Solvent_and_ions"];
+    for (int i = protein + 1; i <= total; ++i) rest.push_back(i);
+    write_index(groups, ndx);
+    return ndx;
+}
+
 void RelaxRunner::equilibrate() {
     const auto topo = topology();
     const auto run_gmx = [&](const std::string& mdp, const std::string& in, const std::string& out,
-                             const std::string& cpt) {
+                             const std::string& cpt, const std::filesystem::path& ndx) {
         std::vector<std::string> cmd = {cfg_.gmx, "grompp", "-f", (cfg_.systemDir() / mdp).string(),
                                         "-c", (dir() / in).string(), "-p", topo.string(),
                                         "-o", (dir() / (out + ".tpr")).string(),
                                         "-po", (dir() / (out + "_mdout.mdp")).string()};
+        if (!ndx.empty()) cmd.insert(cmd.end(), {"-n", ndx.string()});
         if (!cpt.empty()) cmd.insert(cmd.end(), {"-t", (dir() / cpt).string()});
         sh_.run(cmd);
         gmx_.mdrun(dir() / out);
     };
 
-    run_gmx("emin.mdp", "solvated.gro", "em", "");
-    run_gmx("nvt.mdp", "em.gro", "nvt", "");
-    run_gmx("npt.mdp", "nvt.gro", "npt", "nvt.cpt");
+    // EM has no tc-grps, so it needs no index - and it must run first anyway,
+    // because the index is built from the structure it produces.
+    run_gmx("emin.mdp", "solvated.gro", "em", "", {});
+    const auto ndx = write_relax_index();
+    run_gmx("nvt.mdp", "em.gro", "nvt", "", ndx);
+    run_gmx("npt.mdp", "nvt.gro", "npt", "nvt.cpt", ndx);
 }
 
 void RelaxRunner::produce() {
@@ -89,10 +130,16 @@ void RelaxRunner::produce() {
 
     const auto mdp = write_relax_mdp(cfg_, steps);
 
-    sh_.run({cfg_.gmx, "grompp", "-f", mdp.string(), "-c", (dir() / "npt.gro").string(),
-             "-p", topo.string(), "-t", (dir() / "npt.cpt").string(),
-             "-o", (dir() / "md.tpr").string(),
-             "-po", (dir() / "md_mdout.mdp").string()});
+    // The relaxation's production .mdp goes through write_md_spec() too, so it
+    // carries the same tc-grps as equilibration and needs the same index.
+    std::vector<std::string> cmd = {cfg_.gmx, "grompp", "-f", mdp.string(),
+                                    "-c", (dir() / "npt.gro").string(),
+                                    "-p", topo.string(), "-t", (dir() / "npt.cpt").string(),
+                                    "-o", (dir() / "md.tpr").string(),
+                                    "-po", (dir() / "md_mdout.mdp").string()};
+    if (const auto ndx = dir() / "index.ndx"; std::filesystem::exists(ndx))
+        cmd.insert(cmd.end(), {"-n", ndx.string()});
+    sh_.run(cmd);
     gmx_.mdrun(dir() / "md");
 }
 

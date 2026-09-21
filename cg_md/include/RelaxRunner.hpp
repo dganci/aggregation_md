@@ -29,6 +29,21 @@ private:
     /// Single-copy solvated, ionized system built from the coarse-grained
     /// protomer, with its own one-molecule topology.
     void build_system();
+    /// Writes runs/relax_<protomer>/index.ndx with a "Solvent_and_ions" group
+    /// and returns its path (empty when the thermostat does not need one).
+    ///
+    /// --thermostat protein-solvent makes MdpWriter emit
+    /// `tc-grps = Protein Solvent_and_ions`, and Solvent_and_ions is NOT a
+    /// group GROMACS derives on its own - it only exists in an index file.
+    /// The relaxation's grompp passed no -n, so every entry died on the NVT
+    /// step with "group not found", before a single ns of anything. It did not
+    /// show up earlier because the manifest then used --thermostat legacy,
+    /// whose `Protein W ION` groups ARE derived from residue names.
+    ///
+    /// IndexBuilder::generate_index() cannot be reused here: it lays out
+    /// Config::n_prot protomers back-to-back, and the relaxation box holds
+    /// exactly one.
+    std::filesystem::path write_relax_index() const;
     void equilibrate();
     void produce();
     /// Clusters the protein-only trajectory and installs the centroid of the

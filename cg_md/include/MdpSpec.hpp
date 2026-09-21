@@ -44,7 +44,20 @@ constexpr int kSeedMetadBase = 100000;
 constexpr int kSeedWalkerStride = 10000;
 constexpr int kSeedRelax = 3;
 
-constexpr double kTauP = 4.0;
+// C-rescale requires tau-p >= 25 * nstpcouple * dt, and grompp makes falling
+// short a WARNING - which, with no -maxwarn, is fatal. At kNstCouple = 20 and
+// dt = 10 fs that floor is 5.0 ps, so the previous 4.0 failed every NPT grompp
+// the moment nstpcouple started being written out explicitly: before that
+// GROMACS picked its own default of 10, the floor was 2.5, and 4.0 slipped
+// under it. Raising tau-p rather than lowering nstpcouple or passing -maxwarn:
+// nstpcouple = nstlist is what makes the coupling cheap, and the warning is a
+// statement about integration quality, not noise to silence.
+//
+// 12.0 ps is the value the MdpSpec default already carried and a standard
+// Martini choice; at kNstCouple = 20 it clears the floor by a factor of 2.4,
+// so the criterion survives a change of nstlist or dt without silently
+// breaking again.
+constexpr double kTauP = 12.0;
 
 /// The full .mdp text of one dynamics segment.
 std::string production_mdp(const Config& cfg, const MdSpec& spec);
