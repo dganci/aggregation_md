@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """cg_cvgen's Python backend: the entry point, and nothing else."""
 import argparse
+import gc
 import json
 from pathlib import Path
 
@@ -41,12 +42,11 @@ def main():
         if auto:
             cfg["lags"] = auto
 
-    results, outputs = {}, {}
+    results = {}
     for lag in cfg["lags"]:
         print(f"lag={lag}")
-        out = Trainer(cfg, data, lag, cfg["split_ratio"]).run()
-        results[int(lag)] = out.metrics
-        outputs[int(lag)] = out
+        results[int(lag)] = Trainer(cfg, data, lag, cfg["split_ratio"]).run().metrics
+        gc.collect()
     Scorer.apply(results, cfg["n_cvs"])
     selected = Scorer.choose(results, cfg.get("selected_lag", 0))
     print(f"selected_lag={selected} score={results[selected]['score']:.4f}")

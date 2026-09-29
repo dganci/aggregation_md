@@ -62,14 +62,26 @@ CG_TEST(config_validate_rejects_negative_margin) {
     std::filesystem::remove(cfg.backend);
 }
 
+CG_TEST(config_validate_rejects_negative_max_pairs) {
+    auto cfg = make_valid_config();
+    cfg.max_pairs = -1;
+    bool threw = false;
+    try { cfg.validate(); } catch (const std::exception&) { threw = true; }
+    CG_CHECK(threw);
+    std::filesystem::remove(cfg.input_colvar);
+    std::filesystem::remove(cfg.backend);
+}
+
 CG_TEST(config_to_json_serializes_core_fields) {
     auto cfg = make_valid_config();
     cfg.n_cvs = 4;
     cfg.lags = {5, 9, 13};
+    cfg.max_pairs = 200000;
     cfg.feature_regex = "^d_[0-9]+_[0-9]+$";
     const auto json = cfg.to_json();
     CG_CHECK(json.find("\"n_cvs\": 4") != std::string::npos);
     CG_CHECK(json.find("[5, 9, 13]") != std::string::npos);
+    CG_CHECK(json.find("\"max_pairs\": 200000") != std::string::npos);
     CG_CHECK(json.find("d_[0-9]+_[0-9]+") != std::string::npos);
     std::filesystem::remove(cfg.input_colvar);
     std::filesystem::remove(cfg.backend);

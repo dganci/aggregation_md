@@ -26,6 +26,10 @@ struct Config {
     int max_epochs = 200;
     int patience = 50;
     int probe_size = 1024;
+    /// Most time-lagged pairs one model is trained on (0 = all); beyond it they
+    /// are thinned with an even stride. Training is full-batch, so this is what
+    /// bounds its memory.
+    int max_pairs = 500000;
     int seed = 42;
 
     double equilibration_time_ps = 50.0;

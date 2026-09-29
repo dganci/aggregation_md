@@ -15,11 +15,11 @@ INVARIANT_SCALARS = ("rg_com", "cn_total")
 
 def sort_permutable_blocks(df, feature_cols):
     """Replaces each permutable block by its row-wise ascending sort."""
-    out = df.copy()
+    blocks = [(label, [c for c in feature_cols if pattern.match(c)]) for label, pattern in PERMUTABLE_BLOCKS]
+    out = df.drop(columns=[c for _, members in blocks for c in members]).copy()
     cols, present = [], set(feature_cols)
 
-    for label, pattern in PERMUTABLE_BLOCKS:
-        members = [c for c in feature_cols if pattern.match(c)]
+    for label, members in blocks:
         if not members:
             continue
         values = np.sort(df[members].to_numpy(dtype=np.float64), axis=1)

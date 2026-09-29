@@ -87,6 +87,7 @@ class Data:
 
         frames = self._make_clock_continuous(frames)
         df = deps.pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+        del frames
 
         if "time" in df.columns:
             df = df.sort_values("time", kind="mergesort")
@@ -127,7 +128,7 @@ class Data:
         """Trajectory id per frame, aligned with tensor()/time_tensor()."""
         if "walker" not in self.df.columns:
             return None
-        return self.df["walker"].to_numpy()
+        return self.df["walker"].to_numpy(copy=True)
 
     def time_tensor(self):
         values = self.df["time"].to_numpy(dtype=np.float64) if "time" in self.df.columns else np.arange(len(self.df), dtype=np.float64)

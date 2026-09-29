@@ -41,6 +41,7 @@ void Config::validate() const {
     if (max_epochs <= 0) throw std::runtime_error("--max-epochs must be > 0");
     if (patience <= 0) throw std::runtime_error("--patience must be > 0");
     if (probe_size <= 0) throw std::runtime_error("--probe-size must be > 0");
+    if (max_pairs < 0) throw std::runtime_error("--max-pairs must be >= 0 (0 = no cap)");
     if (split_ratio <= 0.0 || split_ratio > 1.0) throw std::runtime_error("--split-ratio must be in (0, 1]");
     if (margin < 0.0) throw std::runtime_error("--margin must be >= 0");
     if (feature_regex.empty()) throw std::runtime_error("--feature-regex cannot be empty");
@@ -61,6 +62,7 @@ std::string Config::to_json() const {
         << "  \"max_epochs\": " << max_epochs << ",\n"
         << "  \"patience\": " << patience << ",\n"
         << "  \"probe_size\": " << probe_size << ",\n"
+        << "  \"max_pairs\": " << max_pairs << ",\n"
         << "  \"seed\": " << seed << ",\n"
         << "  \"equilibration_time_ps\": " << equilibration_time_ps << ",\n"
         << "  \"split_ratio\": " << split_ratio << ",\n"
@@ -85,6 +87,7 @@ std::string Config::summary() const {
         << "  n_cvs             = " << n_cvs << '\n'
         << "  hidden_layers     = " << to_json_array(hidden_layers) << '\n'
         << "  max_epochs        = " << max_epochs << '\n'
+        << "  max_pairs         = " << (max_pairs > 0 ? std::to_string(max_pairs) : "all") << '\n'
         << "  equilibration_ps  = " << equilibration_time_ps << '\n'
         << "  feature_regex     = " << feature_regex << '\n';
     return out.str();
@@ -122,6 +125,10 @@ void print_help(const char* exe) {
         << "  --patience N                 Early-stopping patience, in epochs\n"
         << "  --split-ratio F              Train fraction; the rest is validation (final fit uses 1)\n"
         << "  --probe-size N               Frames per batch when scoring a trained model\n"
+        << "  --max-pairs N                Train each model on at most N time-lagged pairs, thinned\n"
+        << "                               with an even stride (default 500000, 0 = all). Training\n"
+        << "                               is full-batch, so this is what bounds its memory; the\n"
+        << "                               scores and the exported CV still use every frame\n"
         << "  --seed N                     Seed for numpy and torch\n"
         << "  --margin X                   Widens the METAD grid bounds written to cv_params.pkl,\n"
         << "                               as a fraction of the CV range sampled in training. The\n"
@@ -148,6 +155,7 @@ Config parse_args(int argc, char** argv) {
         {"--max-epochs", [&](int& i){ cfg.max_epochs = to_int(take(i, argc, argv, argv[i]), "--max-epochs"); }},
         {"--patience", [&](int& i){ cfg.patience = to_int(take(i, argc, argv, argv[i]), "--patience"); }},
         {"--probe-size", [&](int& i){ cfg.probe_size = to_int(take(i, argc, argv, argv[i]), "--probe-size"); }},
+        {"--max-pairs", [&](int& i){ cfg.max_pairs = to_int(take(i, argc, argv, argv[i]), "--max-pairs"); }},
         {"--seed", [&](int& i){ cfg.seed = to_int(take(i, argc, argv, argv[i]), "--seed"); }},
         {"--equilibration-time-ps", [&](int& i){ cfg.equilibration_time_ps = to_double(take(i, argc, argv, argv[i]), "--equilibration-time-ps"); }},
         {"--split-ratio", [&](int& i){ cfg.split_ratio = to_double(take(i, argc, argv, argv[i]), "--split-ratio"); }},

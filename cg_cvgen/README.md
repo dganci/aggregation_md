@@ -70,6 +70,17 @@ production checks exactly this after every chunk (`cv_readiness.txt`) and
 does not stop until the run is `--adaptive-min-time-over-its` times longer
 than that timescale.
 
+### Memory
+
+DeepTICA is trained full-batch, so memory grows with the number of
+time-lagged pairs, not with the network. Beyond `--max-pairs` (default
+500000) the pairs of each model are thinned with an even stride: they still
+never cross between replicas, every replica keeps its share, and the scores
+and the exported CV are computed on every frame. Pairs a few frames apart
+carry the same slow dynamics, so the thinning costs nothing the model can
+use. Five replicas of 730k frames each (27 features) train in under 4 GB;
+`--max-pairs 0` trains on all of them.
+
 ## Where the Python lives
 
 `scripts/cvgen_backend.py` is the entry point the binary runs; the work is one

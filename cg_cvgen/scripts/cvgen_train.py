@@ -92,6 +92,16 @@ class Trainer:
 
     def dataset(self, x, t, walker=None):
         """Time-lagged pairs, never spanning two independent trajectories."""
+        ds = self._pairs(x, t, walker)
+        cap = int(self.cfg.get("max_pairs", 0))
+        if 0 < cap < len(ds):
+            stride = -(-len(ds) // cap)
+            keep = deps.torch.arange(0, len(ds), stride)
+            print(f"max_pairs: training on 1 time-lagged pair in {stride} ({len(keep)} of {len(ds)})")
+            ds = deps.mlcolvar.data.DictDataset(ds[keep])
+        return ds
+
+    def _pairs(self, x, t, walker):
         try:
             return deps.create_timelagged_dataset(x, t=t, lag_time=self.lag_ps, walker=walker)
         except TypeError:
